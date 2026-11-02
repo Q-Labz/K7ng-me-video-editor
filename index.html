@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumière — AI Video Studio</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">◐</span>
+      <div class="brand-text"><strong>Lumière</strong><span class="ai-badge">AI</span><em>Video Studio</em></div>
+    </div>
+    <div class="top-actions">
+      <button id="btnImport" class="btn primary">＋ Import Media</button>
+      <button id="btnCamera" class="btn">📷 Camera</button>
+      <button id="btnFrame" class="btn">🖼 Frame PNG</button>
+      <button id="btnExport" class="btn accent">⬇ Export WebM</button>
+      <input id="fileInput" type="file" accept="video/*,image/*" multiple hidden>
+      <input id="cubeInput" type="file" accept=".cube" hidden>
+      <input id="refInput" type="file" accept="image/*" hidden>
+    </div>
+  </header>
+  <div class="hint">Space play · ←/→ seek 1s (Shift: 5s) · S split (Shift+S at cuts) · Del remove clip · Ctrl+Z undo · drag clips to reorder · drag edges to trim · drop files anywhere</div>
+
+  <main class="workspace">
+    <aside class="panel left">
+      <section>
+        <h3>PROJECT ASSETS <span id="assetCount" class="count">0</span></h3>
+        <div id="assetList" class="asset-list"></div>
+      </section>
+      <section>
+        <h3>AI TOOLS</h3>
+        <div class="tools">
+          <button class="tool" data-tool="autograde"><b>⚡ Auto Grade</b><small>exposure · white balance · contrast · saturation</small></button>
+          <button class="tool" data-tool="scenes"><b>✂️ Detect Scene Cuts</b><small>visual change analysis → cut markers</small></button>
+          <button class="tool" data-tool="silence"><b>🔇 Detect Silence</b><small>audio RMS analysis → red zones</small></button>
+          <button class="tool" data-tool="applysilence"><b>✔ Apply Silence Cuts</b><small>split clip, removing marked silences</small></button>
+          <button class="tool" data-tool="colormatch"><b>🎨 AI Color Match…</b><small>grade footage to a reference image</small></button>
+          <button class="tool" data-tool="reframe"><b>🎯 Smart Reframe</b><small>auto punch-in on motion center</small></button>
+          <button class="tool" data-tool="resetframe"><b>↺ Reset Framing</b></button>
+        </div>
+      </section>
+    </aside>
+
+    <section class="center">
+      <div id="stage" class="stage">
+        <canvas id="view" width="1280" height="720"></canvas>
+        <div id="empty" class="empty">
+          <div class="empty-icon">🎬</div>
+          <p>No media loaded — import a video or open the camera</p>
+          <small>Everything runs locally in your browser.</small>
+        </div>
+        <div id="camBar" class="cam-bar" hidden>
+          <span id="camRec" class="rec-dot" hidden>● REC <span id="camTime">0:00</span></span>
+          <button id="btnCamRecord" class="btn danger">● Record</button>
+          <button id="btnCamClose" class="btn">Close camera</button>
+        </div>
+        <div id="busy" class="busy" hidden><div class="spinner"></div><span id="busyText">Working…</span><div class="bar"><i id="busyBar"></i></div><button id="busyCancel" class="btn small" hidden>Cancel</button></div>
+      </div>
+      <div class="transport">
+        <span id="tcLeft" class="tc">0:00.0 / 0:00.0</span>
+        <button id="btnRaw" class="btn small" title="Hold to view ungraded (or hold \ )">Hold: Raw</button>
+        <div class="tbtns">
+          <button id="btnStart" class="icon" title="Go to start (Home)">⏮</button>
+          <button id="btnPlay" class="icon play" title="Play / pause (Space)">▶</button>
+          <button id="btnEnd" class="icon" title="Go to end (End)">⏭</button>
+          <button id="btnMute" class="icon" title="Mute (M)">🔊</button>
+        </div>
+        <select id="aspect" title="Output aspect ratio">
+          <option value="source">Source aspect</option>
+          <option value="16:9">16:9</option>
+          <option value="9:16">9:16 vertical</option>
+          <option value="1:1">1:1 square</option>
+          <option value="4:5">4:5 portrait</option>
+        </select>
+        <span id="tcRight" class="tc">0:00.0 / 0:00.0</span>
+      </div>
+      <div class="engine-tag">GPU WebGL · LUT pipeline · local AI</div>
+    </section>
+
+    <aside class="panel right">
+      <section>
+        <h3>CREATIVE LUTS</h3>
+        <div id="lutGrid" class="lut-grid"></div>
+        <label class="slider"><span>LUT intensity</span><input id="lutAmt" type="range" min="0" max="1" step="0.01" value="1"><output>100%</output></label>
+      </section>
+      <section>
+        <h3>COLOR CONTROLS</h3>
+        <div id="controls"></div>
+        <div class="row">
+          <button id="btnResetColor" class="btn small">Reset Color</button>
+          <button id="btnCube" class="btn small">⬆ Import .cube LUT</button>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <section class="timeline-wrap">
+    <div class="tl-head">
+      <h3>TIMELINE</h3>
+      <div class="tl-tools">
+        <button id="btnSplit" class="btn small" title="Split at playhead (S)">✂ Split</button>
+        <button id="btnSplitCuts" class="btn small" title="Split every clip at its scene-cut markers (Shift+S)">✂ Split at cuts</button>
+        <button id="btnDelete" class="btn small" title="Delete selected clip (Del)">🗑 Delete</button>
+        <button id="btnUndo" class="btn small" title="Undo (Ctrl+Z)">↶ Undo</button>
+        <button id="btnRedo" class="btn small" title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
+        <button id="btnClearMarks" class="btn small" title="Clear cut markers and silence zones">Clear marks</button>
+        <label class="zoom">Zoom <input id="zoom" type="range" min="0" max="1" step="0.001" value="0.3"></label>
+        <button id="btnFit" class="btn small">Fit</button>
+      </div>
+    </div>
+    <div id="tlScroll" class="tl-scroll">
+      <div id="tlInner" class="tl-inner">
+        <canvas id="ruler" class="ruler" height="22"></canvas>
+        <div id="track" class="track"></div>
+        <div id="playhead" class="playhead"><i></i></div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="status"><span id="status">Ready</span><span id="statusRight"></span></footer>
+</div>
+<div id="dropOverlay" class="drop-overlay" hidden><div>Drop video or image files to import</div></div>
+<div id="toast" class="toast"></div>
+<script src="js/luts.js"></script>
+<script src="js/gl.js"></script>
+<script src="js/analysis.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
