@@ -4,20 +4,26 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>KutLabz — AI Video Studio</title>
+<meta name="description" content="Browser-native video editor. Decode, grade and export run locally — nothing uploads.">
+<meta name="theme-color" content="#0A0A0A">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 96 96%22%3E%3Crect width=%2296%22 height=%2296%22 rx=%2220%22 fill=%22%23141414%22/%3E%3Cg fill=%22%23D4A017%22%3E%3Crect x=%2222%22 y=%2222%22 width=%2212%22 height=%2252%22/%3E%3Cpath d=%22M40 48 66 22h13L53 48l26 26H66z%22/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400&family=Syne:wght@500;600;700&display=swap">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 <div id="app">
   <header class="topbar">
     <div class="brand">
-      <span class="logo">◐</span>
-      <div class="brand-text"><strong>KutLabz</strong><span class="ai-badge">AI</span><em>Video Studio</em></div>
+      <svg class="mark" viewBox="0 0 96 96" aria-hidden="true"><rect x="12" y="12" width="16" height="72"/><path d="M36 48 72 12h18L54 48l36 36H72z"/></svg>
+      <div class="brand-text"><strong>KutLabz</strong><em>Video Studio</em></div>
     </div>
     <div class="top-actions">
-      <button id="btnImport" class="btn primary">＋ Import Media</button>
-      <button id="btnCamera" class="btn">📷 Camera</button>
-      <button id="btnFrame" class="btn">🖼 Frame PNG</button>
-      <button id="btnExport" class="btn accent">⬇ Export WebM</button>
+      <button id="btnImport" class="btn">Import</button>
+      <button id="btnCamera" class="btn">Camera</button>
+      <button id="btnFrame" class="btn">Frame PNG</button>
+      <button id="btnExport" class="btn primary">Export WebM</button>
       <input id="fileInput" type="file" accept="video/*,image/*" multiple hidden>
       <input id="cubeInput" type="file" accept=".cube" hidden>
       <input id="refInput" type="file" accept="image/*" hidden>
@@ -34,13 +40,13 @@
       <section>
         <h3>AI TOOLS</h3>
         <div class="tools">
-          <button class="tool" data-tool="autograde"><b>⚡ Auto Grade</b><small>exposure · white balance · contrast · saturation</small></button>
-          <button class="tool" data-tool="scenes"><b>✂️ Detect Scene Cuts</b><small>visual change analysis → cut markers</small></button>
-          <button class="tool" data-tool="silence"><b>🔇 Detect Silence</b><small>audio RMS analysis → red zones</small></button>
-          <button class="tool" data-tool="applysilence"><b>✔ Apply Silence Cuts</b><small>split clip, removing marked silences</small></button>
-          <button class="tool" data-tool="colormatch"><b>🎨 AI Color Match…</b><small>grade footage to a reference image</small></button>
-          <button class="tool" data-tool="reframe"><b>🎯 Smart Reframe</b><small>auto punch-in on motion center</small></button>
-          <button class="tool" data-tool="resetframe"><b>↺ Reset Framing</b></button>
+          <button class="tool" data-tool="autograde"><b>Auto Grade</b><small>exposure · white balance · contrast · saturation</small></button>
+          <button class="tool" data-tool="scenes"><b>Detect Scene Cuts</b><small>visual change analysis → cut markers</small></button>
+          <button class="tool" data-tool="silence"><b>Detect Silence</b><small>audio RMS analysis → red zones</small></button>
+          <button class="tool" data-tool="applysilence"><b>Apply Silence Cuts</b><small>split clip, removing marked silences</small></button>
+          <button class="tool" data-tool="colormatch"><b>AI Color Match…</b><small>grade footage to a reference image</small></button>
+          <button class="tool" data-tool="reframe"><b>Smart Reframe</b><small>auto punch-in on motion center</small></button>
+          <button class="tool" data-tool="resetframe"><b>Reset Framing</b></button>
         </div>
       </section>
     </aside>
@@ -49,7 +55,7 @@
       <div id="stage" class="stage">
         <canvas id="view" width="1280" height="720"></canvas>
         <div id="empty" class="empty">
-          <div class="empty-icon">🎬</div>
+          <div class="empty-icon"><svg class="mark" viewBox="0 0 96 96" aria-hidden="true"><rect x="12" y="12" width="16" height="72"/><path d="M36 48 72 12h18L54 48l36 36H72z"/></svg></div>
           <p>No media loaded — import a video or open the camera</p>
           <small>Everything runs locally in your browser.</small>
         </div>
@@ -64,10 +70,10 @@
         <span id="tcLeft" class="tc">0:00.0 / 0:00.0</span>
         <button id="btnRaw" class="btn small" title="Hold to view ungraded (or hold \ )">Hold: Raw</button>
         <div class="tbtns">
-          <button id="btnStart" class="icon" title="Go to start (Home)">⏮</button>
-          <button id="btnPlay" class="icon play" title="Play / pause (Space)">▶</button>
-          <button id="btnEnd" class="icon" title="Go to end (End)">⏭</button>
-          <button id="btnMute" class="icon" title="Mute (M)">🔊</button>
+          <button id="btnStart" class="icon" title="Go to start (Home)">|◀&#xFE0E;</button>
+          <button id="btnPlay" class="icon play" title="Play / pause (Space)">▶&#xFE0E;</button>
+          <button id="btnEnd" class="icon" title="Go to end (End)">▶&#xFE0E;|</button>
+          <button id="btnMute" class="icon" title="Mute (M)">VOL</button>
         </div>
         <select id="aspect" title="Output aspect ratio">
           <option value="source">Source aspect</option>
@@ -92,7 +98,7 @@
         <div id="controls"></div>
         <div class="row">
           <button id="btnResetColor" class="btn small">Reset Color</button>
-          <button id="btnCube" class="btn small">⬆ Import .cube LUT</button>
+          <button id="btnCube" class="btn small">Import .cube</button>
         </div>
       </section>
     </aside>
@@ -102,11 +108,11 @@
     <div class="tl-head">
       <h3>TIMELINE</h3>
       <div class="tl-tools">
-        <button id="btnSplit" class="btn small" title="Split at playhead (S)">✂ Split</button>
-        <button id="btnSplitCuts" class="btn small" title="Split every clip at its scene-cut markers (Shift+S)">✂ Split at cuts</button>
-        <button id="btnDelete" class="btn small" title="Delete selected clip (Del)">🗑 Delete</button>
-        <button id="btnUndo" class="btn small" title="Undo (Ctrl+Z)">↶ Undo</button>
-        <button id="btnRedo" class="btn small" title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
+        <button id="btnSplit" class="btn small" title="Split at playhead (S)">Split</button>
+        <button id="btnSplitCuts" class="btn small" title="Split every clip at its scene-cut markers (Shift+S)">Split at cuts</button>
+        <button id="btnDelete" class="btn small" title="Delete selected clip (Del)">Delete</button>
+        <button id="btnUndo" class="btn small" title="Undo (Ctrl+Z)">Undo</button>
+        <button id="btnRedo" class="btn small" title="Redo (Ctrl+Shift+Z)">Redo</button>
         <button id="btnClearMarks" class="btn small" title="Clear cut markers and silence zones">Clear marks</button>
         <label class="zoom">Zoom <input id="zoom" type="range" min="0" max="1" step="0.001" value="0.3"></label>
         <button id="btnFit" class="btn small">Fit</button>

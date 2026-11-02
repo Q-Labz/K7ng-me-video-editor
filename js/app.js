@@ -162,7 +162,7 @@
   function pause() {
     S.playing = false;
     pauseAllExcept(null);
-    $('btnPlay').textContent = '▶';
+    $('btnPlay').textContent = '▶\uFE0E';
     S.dirty = true;
   }
   function togglePlay() { S.playing ? pause() : play(); }
@@ -397,7 +397,7 @@
       row.innerHTML = `${a.thumb ? `<img alt="">` : '<div class="ph"></div>'}<div class="meta"><div class="name"></div><div class="sub"></div></div><div><button class="add" title="Add to timeline">＋</button><button class="x" title="Remove asset">✕</button></div>`;
       if (a.thumb) row.querySelector('img').src = a.thumb;
       row.querySelector('.name').textContent = a.name;
-      row.querySelector('.sub').textContent = `${a.kind === 'video' ? '🎞' : '🖼'} ${fmt(a.duration)} · ${a.width}×${a.height}`;
+      row.querySelector('.sub').textContent = `${a.kind === 'video' ? 'VID' : 'IMG'} · ${fmt(a.duration)} · ${a.width}×${a.height}`;
       row.querySelector('.add').onclick = (e) => { e.stopPropagation(); addAssetToTimeline(a.id); };
       row.querySelector('.x').onclick = (e) => { e.stopPropagation(); removeAsset(a.id); };
       row.ondblclick = () => addAssetToTimeline(a.id);
@@ -466,7 +466,7 @@
     const W = Math.min(4096, Math.max(1, Math.round(wCss))), H = Math.max(10, Math.round(hCss));
     cv.width = W; cv.height = H;
     const g = cv.getContext('2d'); const sx = W / wCss;
-    g.fillStyle = '#1b2030'; g.fillRect(0, 0, W, H);
+    g.fillStyle = '#141414'; g.fillRect(0, 0, W, H);
     if (a.frames.length) {
       const f0 = a.frames[0].img, ar = (f0.naturalWidth || f0.width) / (f0.naturalHeight || f0.height);
       const tileW = H * ar;
@@ -478,7 +478,7 @@
       }
     }
     if (a.peaks) {
-      g.fillStyle = 'rgba(160,150,255,.85)';
+      g.fillStyle = 'rgba(232,228,220,.8)';
       const base = H - 3, amp = H * 0.38;
       for (let px = 0; px < W; px++) {
         const t = c.in + (px / sx) / S.pps;
@@ -498,16 +498,16 @@
     ruler.width = W; ruler.style.width = W + 'px';
     const g = ruler.getContext('2d');
     g.clearRect(0, 0, W, 22);
-    g.font = '10px system-ui, sans-serif'; g.textBaseline = 'top';
+    g.font = '10px "DM Mono", ui-monospace, monospace'; g.textBaseline = 'top';
     const step = niceStep(S.pps), minor = step / 5;
     const t0 = Math.max(0, (sl - PAD) / S.pps), t1 = (sl + W - PAD) / S.pps;
     for (let k = Math.floor(t0 / minor); k * minor <= t1; k++) {
       const t = Math.round(k * minor * 1000) / 1000;
       const x = Math.round(PAD + t * S.pps - sl) + 0.5;
       const major = k % 5 === 0;
-      g.fillStyle = t > S.total + 1e-6 ? '#2a2e39' : major ? '#8b91a1' : '#3a4050';
+      g.fillStyle = t > S.total + 1e-6 ? '#242424' : major ? '#8A8A85' : '#3a3a37';
       g.fillRect(x, major ? 10 : 15, 1, major ? 12 : 7);
-      if (major) { g.fillStyle = t > S.total + 1e-6 ? '#3a4050' : '#8b91a1'; g.fillText(step < 1 ? fmt(t) : fmt(t).replace(/\.0$/, ''), x + 3, 1); }
+      if (major) { g.fillStyle = t > S.total + 1e-6 ? '#3a3a37' : '#8A8A85'; g.fillText(step < 1 ? fmt(t) : fmt(t).replace(/\.0$/, ''), x + 3, 1); }
     }
   }
   function positionPlayhead() { playhead.style.left = PAD + S.time * S.pps + 'px'; }
@@ -987,7 +987,7 @@
     rec.onstop = () => {
       const ex = S.exporting; S.exporting = null;
       tracks.forEach((t) => t.kind === 'video' && t.stop());
-      $('busy').hidden = true; $('btnExport').textContent = '⬇ Export WebM';
+      $('busy').hidden = true; $('btnExport').textContent = 'Export WebM';
       if (!ex || ex.cancelled) { setStatus('Export cancelled'); return; }
       const blob = new Blob(chunks, { type: 'video/webm' });
       download(blob, `kutlabz-export-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.webm`);
@@ -1010,7 +1010,7 @@
   $('btnStart').onclick = () => { if (!S.exporting) seek(0); };
   $('btnEnd').onclick = () => { if (!S.exporting) { pause(); seek(S.total); } };
   function setMuted(m) {
-    S.muted = m; $('btnMute').textContent = m ? '🔇' : '🔊';
+    S.muted = m; $('btnMute').textContent = m ? 'MUTE' : 'VOL'; $('btnMute').classList.toggle('active', m);
     if (S.monitor) S.monitor.gain.value = m ? 0 : 1;
     else S.assets.forEach((a) => a.kind === 'video' && (a.el.muted = m));
   }
