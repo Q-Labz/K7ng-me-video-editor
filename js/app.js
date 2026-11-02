@@ -1,4 +1,4 @@
-/* Lumière — AI Video Studio. Single-track, browser-only editor. */
+/* KutLabz — AI Video Studio. Single-track, browser-only editor. */
 (function () {
   'use strict';
 
@@ -401,7 +401,7 @@
       row.querySelector('.add').onclick = (e) => { e.stopPropagation(); addAssetToTimeline(a.id); };
       row.querySelector('.x').onclick = (e) => { e.stopPropagation(); removeAsset(a.id); };
       row.ondblclick = () => addAssetToTimeline(a.id);
-      row.ondragstart = (e) => { e.dataTransfer.setData('text/x-lumiere-asset', a.id); e.dataTransfer.effectAllowed = 'copy'; };
+      row.ondragstart = (e) => { e.dataTransfer.setData('text/x-kutlabz-asset', a.id); e.dataTransfer.effectAllowed = 'copy'; };
       list.appendChild(row);
     }
   }
@@ -605,9 +605,9 @@
   window.addEventListener('pointercancel', onUp);
 
   // asset drag-in
-  track.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('text/x-lumiere-asset')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+  track.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('text/x-kutlabz-asset')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
   track.addEventListener('drop', (e) => {
-    const id = e.dataTransfer.getData('text/x-lumiere-asset'); if (!id) return;
+    const id = e.dataTransfer.getData('text/x-kutlabz-asset'); if (!id) return;
     e.preventDefault(); e.stopPropagation();
     const t = xToTime(e.clientX); let ins = S.clips.length;
     for (let i = 0; i < S.clips.length; i++) if (t < S.starts[i] + clipDur(S.clips[i]) / 2) { ins = i; break; }
@@ -962,7 +962,7 @@
     if (!R || (!S.clips.length && !S.camera)) return toast('Nothing to capture yet');
     const loc = locate(S.time);
     if (loc && !S.camera) { R.upload(loc.asset.el); R.draw(colorParams(), framingFor(loc), S.raw); }
-    canvas.toBlob((b) => { if (!b) return toast('Capture failed', true); download(b, `lumiere-frame-${fmt(S.time).replace(/[:.]/g, '-')}.png`); toast(`Saved ${canvas.width}×${canvas.height} PNG`); }, 'image/png');
+    canvas.toBlob((b) => { if (!b) return toast('Capture failed', true); download(b, `kutlabz-frame-${fmt(S.time).replace(/[:.]/g, '-')}.png`); toast(`Saved ${canvas.width}×${canvas.height} PNG`); }, 'image/png');
   }
   $('btnFrame').onclick = framePng;
 
@@ -990,7 +990,7 @@
       $('busy').hidden = true; $('btnExport').textContent = '⬇ Export WebM';
       if (!ex || ex.cancelled) { setStatus('Export cancelled'); return; }
       const blob = new Blob(chunks, { type: 'video/webm' });
-      download(blob, `lumiere-export-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.webm`);
+      download(blob, `kutlabz-export-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.webm`);
       setStatus(`Exported ${fmt(S.total)} · ${(blob.size / 1048576).toFixed(1)} MB`);
       toast('Export complete — WebM downloaded');
     };
@@ -1080,5 +1080,5 @@
   requestAnimationFrame(loop);
 
   // tiny debug/test hook
-  window.Lumiere = { state: S, importFiles, seek, play, pause, splitAt: (t) => { pushHistory(); splitAt(t); afterEdit(); }, tools, undo, redo };
+  window.KutLabz = { state: S, importFiles, seek, play, pause, splitAt: (t) => { pushHistory(); splitAt(t); afterEdit(); }, tools, undo, redo };
 })();

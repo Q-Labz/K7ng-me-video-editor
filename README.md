@@ -1,4 +1,4 @@
-# Lumière — AI Video Studio
+# KutLabz — AI Video Studio
 
 A video editor that runs entirely in the browser. No build step, no server-side processing and no uploads: all decoding, analysis, grading and export happen on your machine.
 
