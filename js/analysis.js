@@ -402,8 +402,49 @@
     return { score: 0.4 * Math.min(1, sharp / 3) + 0.25 * expo + 0.2 * contrast + 0.15 * Math.min(1, colourful / 90), sharp, expo, contrast, colourful };
   }
 
+  /**
+   * Auto Zoom for screen recordings: find where the screen is changing (typing, clicks,
+   * scrolling a panel) and return zoom keys [{t, x, y, s}] that push in on localised
+   * activity, hold for a beat, then ease back out when the activity spreads or stops.
+   */
+  async function detectFocus(url, tIn, tOut, opts = {}) {
+    const W = 96, H = 54, step = Math.max(0.2, (tOut - tIn) / 900), maxZoom = opts.maxZoom || 1.9;
+    const times = []; for (let t = tIn; t <= tOut; t += step) times.push(t);
+    const raw = []; let prev = null;
+    await sampleFrames(url, times, (img, t) => {
+      const L = toLuma(img);
+      let n = 0, sx = 0, sy = 0, sxx = 0, syy = 0;
+      if (prev) for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const i = y * W + x; if (Math.abs(L[i] - prev[i]) > 14) { n++; sx += x; sy += y; sxx += x * x; syy += y * y; }
+      }
+      const frac = n / (W * H);
+      if (n >= 3 && frac < 0.18) {
+        const mx = sx / n, my = sy / n, vx = Math.sqrt(Math.max(1, sxx / n - mx * mx)), vy = Math.sqrt(Math.max(1, syy / n - my * my));
+        const spread = Math.max((vx * 4) / W, (vy * 4) / H); // ~±2σ box as a fraction of the frame
+        raw.push({ t, x: (mx + 0.5) / W, y: (my + 0.5) / H, s: Math.min(maxZoom, Math.max(1, 0.8 / Math.max(spread, 0.2))), active: true });
+      } else raw.push({ t, x: 0.5, y: 0.5, s: 1, active: false });
+      prev = L;
+    }, { ...opts, w: W, h: H });
+    // hold each zoom ~1.5 s after the last activity, then release
+    const hold = Math.ceil(1.5 / step); let last = -1e9;
+    for (let i = 0; i < raw.length; i++) {
+      if (raw[i].active && raw[i].s > 1.15) last = i;
+      else if (i - last <= hold && last >= 0) raw[i] = { ...raw[last], t: raw[i].t, active: false };
+    }
+    // ease: camera position follows quickly, zoom level slowly (no snapping)
+    const out = []; let cx = 0.5, cy = 0.5, cs = 1;
+    for (const k of raw) {
+      const a = k.s > 1 ? 0.25 : 0.12, b = k.s > cs ? 0.12 : 0.08;
+      cx += (k.x - cx) * a; cy += (k.y - cy) * a; cs += (k.s - cs) * b;
+      out.push({ t: +k.t.toFixed(3), x: +cx.toFixed(4), y: +cy.toFixed(4), s: +cs.toFixed(3) });
+    }
+    // backward pass so zooms start slightly before the action instead of lagging behind it
+    for (let i = out.length - 2; i >= 0; i--) { out[i].s = +Math.max(out[i].s, out[i + 1].s - 0.04).toFixed(3); }
+    return { keys: out, zooms: raw.filter((k, i) => k.active && k.s > 1.15 && !(raw[i - 1] && raw[i - 1].active && raw[i - 1].s > 1.15)).length };
+  }
+
   window.Analysis = {
     sampleFrames, detectScenes, detectSilence, trackMotion, autoGrade, AW, AH,
-    frameStats, activityProfile, loudnessProfile, measureLoudness, detectBeats, detectDeadFrames, estimateShake, thumbScore,
+    frameStats, activityProfile, loudnessProfile, measureLoudness, detectBeats, detectDeadFrames, estimateShake, thumbScore, detectFocus,
   };
 })();
