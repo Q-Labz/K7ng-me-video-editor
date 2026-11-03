@@ -15,6 +15,8 @@ precision highp float;
 varying vec2 v_uv;
 uniform sampler2D u_tex;
 uniform sampler2D u_lut;
+uniform sampler2D u_overlay;
+uniform float u_ovOn;
 uniform float u_lutSize;
 uniform float u_lutAmt;
 uniform vec4 u_rect;       // media-uv rect visible on canvas: x, y, w, h
@@ -23,6 +25,12 @@ uniform float u_exposure, u_contrast, u_highlights, u_shadows, u_temp, u_tint, u
 uniform vec2 u_aspect;
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+
+vec3 overlay(vec3 c) {
+  if (u_ovOn < 0.5) return c;
+  vec4 o = texture2D(u_overlay, v_uv);
+  return mix(c, o.rgb, o.a);
+}
 
 vec3 lutLookup(vec3 c) {
   float n = u_lutSize;
@@ -40,9 +48,9 @@ vec3 lutLookup(vec3 c) {
 
 void main() {
   vec2 muv = u_rect.xy + v_uv * u_rect.zw;
-  if (muv.x < 0.0 || muv.y < 0.0 || muv.x > 1.0 || muv.y > 1.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+  if (muv.x < 0.0 || muv.y < 0.0 || muv.x > 1.0 || muv.y > 1.0) { gl_FragColor = vec4(overlay(vec3(0.0)), 1.0); return; }
   vec3 c = texture2D(u_tex, muv).rgb;
-  if (u_raw > 0.5) { gl_FragColor = vec4(c, 1.0); return; }
+  if (u_raw > 0.5) { gl_FragColor = vec4(overlay(c), 1.0); return; }
 
   // exposure (in stops, applied in approx-linear space)
   vec3 lin = pow(c, vec3(2.2));
@@ -81,7 +89,7 @@ void main() {
     c *= mix(1.0, v, clamp(u_vignette, 0.0, 1.0));
     if (u_vignette < 0.0) c = mix(c, vec3(1.0), (1.0 - v) * -u_vignette * 0.6);
   }
-  gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+  gl_FragColor = vec4(overlay(clamp(c, 0.0, 1.0)), 1.0);
 }`;
 
   class Renderer {
@@ -104,8 +112,11 @@ void main() {
       for (let i = 0; i < n; i++) { const info = gl.getActiveUniform(this.prog, i); this.u[info.name] = gl.getUniformLocation(this.prog, info.name); }
       this.tex = this._texture();
       this.lutTex = this._texture();
+      this.ovTex = this._texture();
+      this.ovOn = false;
       gl.uniform1i(this.u.u_tex, 0);
       gl.uniform1i(this.u.u_lut, 1);
+      gl.uniform1i(this.u.u_overlay, 2);
       this.hasFrame = false;
       this.mediaSize = [16, 9];
       this.setLut(null);
@@ -157,6 +168,18 @@ void main() {
       this.lutSize = n;
     }
 
+    /** Text/graphics layer drawn over the graded image (straight alpha, output-sized canvas) or null. */
+    setOverlay(cv) {
+      const gl = this.gl;
+      this.ovOn = !!cv;
+      if (!cv) return;
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, this.ovTex);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv);
+    }
+
     /** Upload a frame from a video / image / canvas element. Returns true on success. */
     upload(el) {
       const gl = this.gl;
@@ -198,6 +221,8 @@ void main() {
       gl.useProgram(this.prog);
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.tex);
       gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.lutTex);
+      gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.ovTex);
+      gl.uniform1f(u.u_ovOn, this.ovOn ? 1 : 0);
       gl.uniform4f(u.u_rect, cx - w / 2, cy - h / 2, w, h);
       gl.uniform1f(u.u_raw, raw ? 1 : 0);
       gl.uniform1f(u.u_lutSize, this.lutSize);

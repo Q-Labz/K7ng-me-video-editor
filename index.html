@@ -27,6 +27,8 @@
       <input id="fileInput" type="file" accept="video/*,image/*" multiple hidden>
       <input id="cubeInput" type="file" accept=".cube" hidden>
       <input id="refInput" type="file" accept="image/*" hidden>
+      <input id="musicInput" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac" hidden>
+      <input id="srtInput" type="file" accept=".srt,.vtt,text/vtt" hidden>
     </div>
   </header>
   <div class="hint">Space play · ←/→ seek 1s (Shift: 5s) · S split (Shift+S at cuts) · Del remove clip · Ctrl+Z undo · drag clips to reorder · drag edges to trim · drop files anywhere</div>
@@ -39,14 +41,39 @@
       </section>
       <section>
         <h3>AI TOOLS</h3>
+        <h4 class="tool-group">Edit</h4>
+        <div class="tools">
+          <button class="tool" data-tool="scenes"><b>Detect Scene Cuts</b><small>visual change analysis → cut markers</small></button>
+          <button class="tool" data-tool="highlight"><b>Highlight Reel…</b><small>keep the strongest 15–90 s by motion + audio</small></button>
+          <button class="tool" data-tool="deadframes"><b>Detect Dead Frames</b><small>black and frozen stretches → marked zones</small></button>
+          <button class="tool" data-tool="applysilence"><b>Cut Marked Zones</b><small>remove marked silence and dead frames</small></button>
+        </div>
+        <h4 class="tool-group">Audio</h4>
+        <div class="tools">
+          <button class="tool" data-tool="silence"><b>Detect Silence</b><small>audio RMS analysis → red zones</small></button>
+          <button class="tool" data-tool="loudness"><b>Loudness Match</b><small>level every clip to one loudness</small></button>
+          <button class="tool" data-tool="voice"><b>Voice Enhance</b><small>rumble cut · de-mud · presence · compression</small></button>
+          <button class="tool" data-tool="music"><b>Add Music Bed…</b><small>beat detection · auto duck under dialogue</small></button>
+          <button class="tool" data-tool="beatcut"><b>Cut to Beat</b><small>snap every cut to the music grid</small></button>
+        </div>
+        <h4 class="tool-group">Color</h4>
         <div class="tools">
           <button class="tool" data-tool="autograde"><b>Auto Grade</b><small>exposure · white balance · contrast · saturation</small></button>
-          <button class="tool" data-tool="scenes"><b>Detect Scene Cuts</b><small>visual change analysis → cut markers</small></button>
-          <button class="tool" data-tool="silence"><b>Detect Silence</b><small>audio RMS analysis → red zones</small></button>
-          <button class="tool" data-tool="applysilence"><b>Apply Silence Cuts</b><small>split clip, removing marked silences</small></button>
+          <button class="tool" data-tool="matchshots"><b>Match Shots</b><small>match every clip to the selected one</small></button>
           <button class="tool" data-tool="colormatch"><b>AI Color Match…</b><small>grade footage to a reference image</small></button>
+        </div>
+        <h4 class="tool-group">Framing</h4>
+        <div class="tools">
           <button class="tool" data-tool="reframe"><b>Smart Reframe</b><small>auto punch-in on motion center</small></button>
+          <button class="tool" data-tool="stabilize"><b>Stabilize</b><small>measure shake, smooth with a steady crop</small></button>
           <button class="tool" data-tool="resetframe"><b>Reset Framing</b></button>
+        </div>
+        <h4 class="tool-group">Content</h4>
+        <div class="tools">
+          <button class="tool" data-tool="title"><b>Add Text…</b><small>title · lower third · caption at the playhead</small></button>
+          <button class="tool" data-tool="captions"><b>Import Captions…</b><small>.srt or .vtt, burned into the export</small></button>
+          <button class="tool" data-tool="thumbnail"><b>Best Thumbnail</b><small>score frames, save the strongest as PNG</small></button>
+          <button class="tool" data-tool="chapters"><b>Chapters…</b><small>YouTube chapter list from cuts and titles</small></button>
         </div>
       </section>
     </aside>
@@ -121,7 +148,9 @@
     <div id="tlScroll" class="tl-scroll">
       <div id="tlInner" class="tl-inner">
         <canvas id="ruler" class="ruler" height="22"></canvas>
+        <div id="textLane" class="lane text-lane" title="Text lane — titles, lower thirds and captions"></div>
         <div id="track" class="track"></div>
+        <div id="musicLane" class="lane music-lane" hidden></div>
         <div id="playhead" class="playhead"><i></i></div>
       </div>
     </div>
@@ -131,6 +160,13 @@
 </div>
 <div id="dropOverlay" class="drop-overlay" hidden><div>Drop video or image files to import</div></div>
 <div id="toast" class="toast"></div>
+<div id="dlg" class="dlg" hidden>
+  <form id="dlgForm" class="dlg-card">
+    <h3 id="dlgTitle"></h3>
+    <div id="dlgBody"></div>
+    <div class="dlg-actions"><button type="button" id="dlgCancel" class="btn">Cancel</button><button type="submit" id="dlgOk" class="btn primary">OK</button></div>
+  </form>
+</div>
 <script src="js/luts.js"></script>
 <script src="js/gl.js"></script>
 <script src="js/analysis.js"></script>

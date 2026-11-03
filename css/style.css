@@ -68,6 +68,9 @@ h3 { font-family: var(--syne); font-size: 11px; font-weight: 600; letter-spacing
 .asset .add:hover { color: var(--bone); }
 
 .tools { display: flex; flex-direction: column; gap: 4px; }
+.tool-group { font-family: var(--mono); font-size: 10px; font-weight: 400; letter-spacing: .08em; text-transform: uppercase; color: var(--ash); margin: 16px 0 8px; display: flex; align-items: center; gap: 8px; }
+.tool-group::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+h3 + .tool-group { margin-top: 0; }
 .tool { text-align: left; background: var(--ink); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; transition: border-color .3s var(--ease), background .3s var(--ease); }
 .tool:hover { border-color: var(--line-2); background: var(--carbon-2); }
 .tool b { font-weight: 600; font-size: 12px; }
@@ -119,16 +122,16 @@ input[type=range] { width: 100%; accent-color: var(--bone); }
 .row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 
 /* Timeline */
-.timeline-wrap { min-width: 0; background: var(--carbon); border-top: 1px solid var(--line); height: 192px; display: flex; flex-direction: column; min-height: 0; }
+.timeline-wrap { min-width: 0; background: var(--carbon); border-top: 1px solid var(--line); height: 248px; display: flex; flex-direction: column; min-height: 0; }
 .tl-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; gap: 12px; flex-wrap: wrap; }
 .tl-head h3 { margin: 0; }
 .tl-tools { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .zoom { display: flex; align-items: center; gap: 8px; color: var(--ash); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; margin: 0 4px; }
 .zoom input { width: 120px; }
 .tl-scroll { flex: 1; overflow-x: auto; overflow-y: hidden; position: relative; padding: 0 16px 8px; }
-.tl-inner { position: relative; height: 100%; min-width: 100%; }
-.ruler { display: block; height: 22px; cursor: pointer; }
-.track { position: relative; height: calc(100% - 26px); margin-top: 4px; background: repeating-linear-gradient(90deg, #111 0 1px, transparent 1px 40px), var(--ink); border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; }
+.tl-inner { position: relative; height: 100%; min-width: 100%; display: flex; flex-direction: column; }
+.ruler { display: block; height: 22px; flex: none; cursor: pointer; }
+.track { position: relative; flex: 1; min-height: 48px; margin-top: 4px; background: repeating-linear-gradient(90deg, #111 0 1px, transparent 1px 40px), var(--ink); border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; }
 .clip { position: absolute; top: 4px; bottom: 4px; background: var(--carbon); border: 1px solid var(--line-2); border-radius: 3px; overflow: hidden; cursor: grab; user-select: none; touch-action: none; transition: border-color .3s var(--ease); }
 .clip.sel { border-color: var(--bone); box-shadow: 0 0 0 1px var(--bone); }
 .clip.dragging { opacity: .55; cursor: grabbing; z-index: 3; }
@@ -138,6 +141,7 @@ input[type=range] { width: 100%; accent-color: var(--bone); }
 .clip .h:hover, .clip.sel .h { background: rgba(232, 228, 220, .45); }
 .clip .h.l { left: 0; }
 .clip .h.r { right: 0; }
+.zone.dead { background: repeating-linear-gradient(135deg, rgba(138,138,133,.38) 0 4px, rgba(10,10,10,.25) 4px 8px); border-color: var(--ash); }
 .zone { position: absolute; top: 0; bottom: 0; background: rgba(181, 71, 63, .32); border-left: 1px solid var(--alert); border-right: 1px solid var(--alert); pointer-events: none; z-index: 1; }
 .marker { position: absolute; top: -2px; bottom: -2px; width: 1px; background: var(--bone); z-index: 2; cursor: pointer; }
 .marker::before { content: ""; position: absolute; top: -4px; left: -4px; border: 4px solid transparent; border-top-color: var(--bone); }
@@ -147,6 +151,35 @@ input[type=range] { width: 100%; accent-color: var(--bone); }
 .playhead { position: absolute; top: 0; bottom: 0; width: 0; pointer-events: none; z-index: 6; }
 .playhead i { position: absolute; top: 0; bottom: 0; left: -1px; width: 2px; background: var(--gold); box-shadow: 0 0 6px rgba(212, 160, 23, .15); }
 .playhead i::before { content: ""; position: absolute; top: 0; left: -5px; border: 6px solid transparent; border-top: 8px solid var(--gold); }
+
+.lane { position: relative; flex: none; }
+.text-lane { height: 34px; margin-top: 4px; } /* row 1: titles + lower thirds, row 2: captions */
+.text-lane:empty::after { content: "Text lane — Add Text or Import Captions"; position: absolute; left: 16px; top: 3px; font-family: var(--mono); font-size: 10px; color: #3a3a37; pointer-events: none; }
+.tblock.row2 { top: 17px; }
+.tblock { position: absolute; top: 0; height: 16px; padding: 0 6px; border: 1px solid var(--line-2); border-radius: 2px; background: var(--carbon-2); font-size: 10px; font-weight: 600; line-height: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; transition: border-color .3s var(--ease); }
+.tblock.title { background: #22211f; }
+.tblock.caption { font-family: var(--mono); font-weight: 400; color: var(--ash); }
+.tblock:hover { border-color: var(--ash); }
+.tblock.sel { border-color: var(--bone); color: var(--bone); }
+.music-lane { height: 30px; margin-top: 4px; }
+.music-lane .wave { position: absolute; top: 0; height: 30px; border: 1px solid var(--line); border-radius: 2px; }
+.mlabel { position: sticky; left: 0; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 6px 0 22px; font-family: var(--mono); font-size: 10px; pointer-events: none; }
+.mlabel span { background: rgba(10,10,10,.8); padding: 1px 6px; border-radius: 2px; }
+.mlabel button { pointer-events: auto; background: rgba(10,10,10,.85); border: 1px solid var(--line-2); border-radius: 2px; color: var(--ash); font-family: var(--mono); font-size: 10px; padding: 1px 6px; }
+.mlabel button.on { color: var(--bone); border-color: var(--bone); }
+.mlabel button.x:hover { color: var(--alert); }
+
+/* Dialog */
+.dlg { position: fixed; inset: 0; background: rgba(10,10,10,.72); display: flex; align-items: center; justify-content: center; z-index: 70; padding: 16px; }
+.dlg-card { width: min(480px, 100%); background: var(--carbon); border: 1px solid var(--line-2); border-radius: var(--radius); padding: 24px; box-shadow: 0 24px 64px rgba(0,0,0,.6); display: flex; flex-direction: column; gap: 16px; }
+.dlg-card h3 { margin: 0; color: var(--bone); font-size: 12px; }
+#dlgBody { display: flex; flex-direction: column; gap: 12px; }
+.dlg-note { margin: 0; color: var(--ash); font-family: var(--mono); font-size: 11px; line-height: 1.6; }
+.dlg-field { display: flex; flex-direction: column; gap: 6px; font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--ash); }
+.dlg-field input, .dlg-field textarea, .dlg-field select { background: var(--ink); color: var(--bone); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; font-family: var(--syne); font-size: 14px; font-weight: 500; letter-spacing: 0; text-transform: none; resize: vertical; }
+.dlg-field textarea { font-family: var(--mono); font-size: 12px; line-height: 1.6; }
+.dlg-field :focus { outline: 1px solid var(--bone); outline-offset: 0; }
+.dlg-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 .status { display: flex; justify-content: space-between; padding: 4px 16px; font-family: var(--mono); font-size: 11px; color: var(--ash); border-top: 1px solid var(--line); background: var(--ink); }
 
