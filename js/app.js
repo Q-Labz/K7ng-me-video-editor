@@ -751,11 +751,22 @@
 
   // --- timeline pointer interactions ---
   let drag = null;
+  const touches = new Map(); let pinch = null;
   function onTrackDown(e) {
     if (e.button !== 0 || S.exporting) return;
     const marker = e.target.closest('.marker');
     if (marker) { e.stopPropagation(); seek(+marker.dataset.t); return; }
     const clipEl = e.target.closest('.clip');
+    if (e.pointerType === 'touch') {
+      if (pinch || touches.size > 1) return; // second finger: the pinch handler owns it
+      const edgeT = e.target.dataset && e.target.dataset.edge;
+      const tid = clipEl && clipEl.dataset.id;
+      if (!edgeT && !(tid && tid === S.selected)) {
+        // a finger on empty track or an unselected clip pans the timeline; a tap (no movement) selects / seeks
+        drag = { type: 'pan', pid: e.pointerId, x0: e.clientX, sl0: tlScroll.scrollLeft, moved: false, tapClip: tid || null };
+        return;
+      }
+    }
     if (!clipEl) { // scrub
       S.selected = null; S.selText = null; renderTimeline();
       drag = { type: 'scrub' }; seek(xToTime(e.clientX));
@@ -776,7 +787,16 @@
     e.preventDefault();
   }
   function onMove(e) {
+    if (touches.has(e.pointerId)) touches.set(e.pointerId, e.clientX);
+    if (pinch && touches.size >= 2) {
+      const [a, b] = [...touches.values()], d = Math.max(20, Math.abs(a - b));
+      const z = clamp(pinch.z + Math.log(d / pinch.d) / Math.log(100), 0, 1);
+      S.pps = ppsFromZoom(z); $('zoom').value = z; renderTimeline();
+      tlScroll.scrollLeft = PAD + pinch.t * S.pps - (pinch.mid - tlScroll.getBoundingClientRect().left);
+      return;
+    }
     if (!drag) return;
+    if (drag.type === 'pan') { if (e.pointerId !== drag.pid) return; const dx = e.clientX - drag.x0; if (Math.abs(dx) > 6) drag.moved = true; if (drag.moved) tlScroll.scrollLeft = drag.sl0 - dx; return; }
     if (drag.type === 'scrub') { seek(xToTime(e.clientX)); return; }
     const c = S.clips.find((x) => x.id === drag.id); if (!c) return;
     const a = assetById(c.assetId);
@@ -805,8 +825,19 @@
     }
   }
   function onUp(e) {
+    const wasPinch = !!pinch;
+    touches.delete(e.pointerId); if (touches.size < 2) pinch = null;
+    if (wasPinch) { drag = null; return; } // lifting a finger after a pinch is not a tap
     if (!drag) return;
+    if (drag.type === 'pan' && e.pointerId !== drag.pid) return;
     const d = drag; drag = null;
+    if (d.type === 'pan') {
+      if (!d.moved && e.type === 'pointerup') {
+        if (d.tapClip) { S.selected = d.tapClip; S.selText = null; renderTimeline(); setStatus('Clip selected — drag it to move, drag its edges to trim'); }
+        else { S.selected = null; S.selText = null; seek(xToTime(e.clientX)); renderTimeline(); }
+      }
+      return;
+    }
     if (d.type === 'trim') { afterEdit(); setStatus('Trimmed clip'); if (d.wasPlaying) play(); }
     else if (d.type === 'move') {
       if (d.moved && d.ins != null) {
@@ -819,6 +850,16 @@
     }
   }
   track.addEventListener('pointerdown', onTrackDown);
+  tlScroll.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'touch') return;
+    touches.set(e.pointerId, e.clientX);
+    if (touches.size === 2) {
+      const [a, b] = [...touches.values()], mid = (a + b) / 2;
+      pinch = { d: Math.max(20, Math.abs(a - b)), z: +$('zoom').value, mid, t: xToTime(mid) };
+      if (drag && drag.type === 'trim') afterEdit();
+      drag = null;
+    }
+  }, true);
   ruler.addEventListener('pointerdown', (e) => { if (S.exporting) return; drag = { type: 'scrub' }; seek(xToTime(e.clientX)); e.preventDefault(); });
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
@@ -1349,6 +1390,40 @@
     captions() { $('srtInput').value = ''; $('srtInput').click(); },
 
     screen() { return openScreen(); },
+
+    async reel(opts) {
+      if (!S.clips.length) return toast('Import footage first');
+      if (S.busy || S.exporting) return toast('Wait for the current task to finish');
+      const v = opts || await dialog({
+        title: 'Make a Reel', ok: 'Make it',
+        note: 'Vertical 9:16 with the subject kept in frame, dead air removed, trimmed to the strongest moments and leveled — ready for Reels, TikTok and Shorts. Every step is undoable.',
+        fields: [
+          { k: 'len', label: 'Length', type: 'select', options: [['keep', 'Keep everything'], ['15', '15 s'], ['30', '30 s'], ['60', '60 s'], ['90', '90 s']], value: '30' },
+          { k: 'silence', label: 'Dead air', type: 'select', options: [['cut', 'Cut silences and dead frames'], ['keep', 'Keep']], value: 'cut' },
+          { k: 'audio', label: 'Audio', type: 'select', options: [['level', 'Level loudness'], ['voice', 'Level + voice enhance'], ['keep', 'Leave as is']], value: 'level' },
+        ],
+      });
+      if (!v) return;
+      const steps = [], hasVideo = () => S.clips.some((c) => assetById(c.assetId).kind === 'video');
+      const step = async (label, fn) => { S.selected = null; const mark = toastLog.length; await fn(); while (S.busy) await new Promise((r) => setTimeout(r, 100)); steps.push(`${label}: ${(toastLog.slice(mark).pop() || {}).msg || 'done'}`); };
+      if (v.silence === 'cut' && hasVideo()) {
+        await step('Silence', () => tools.silence());
+        await step('Dead frames', () => tools.deadframes());
+        await step('Cut', () => tools.applysilence());
+      }
+      const target = +v.len;
+      if (target && S.total > target + 0.5 && hasVideo()) await step('Highlights', () => tools.highlight(String(target)));
+      $('aspect').value = '9:16'; S.aspect = '9:16'; updateCanvasSize(); S.dirty = true;
+      if (hasVideo()) await step('Reframe', () => tools.reframe());
+      if (v.audio !== 'keep' && hasVideo()) {
+        await step('Loudness', () => tools.loudness());
+        if (v.audio === 'voice' && !S.clips.every((c) => c.enhance)) await step('Voice', () => tools.voice());
+      }
+      seek(0); fitZoom();
+      toast(`Reel ready: ${fmt(S.total)} at 9:16 — preview, add text, then Export`);
+      setStatus('Make a Reel: ' + steps.map((x) => x.split(':')[0]).join(' → '));
+      return steps;
+    },
     studio() { openStudio(); },
 
     autozoom() {
@@ -1678,7 +1753,8 @@
     ensureAudio();
     pause(); seek(0);
     await new Promise((r) => setTimeout(r, 350));
-    const mime = pickMime(['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']);
+    const mime = pickMime(['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']);
+    const isMp4 = mime.startsWith('video/mp4');
     const tracks = [...canvas.captureStream(30).getVideoTracks()];
     if (S.recDest) tracks.push(...S.recDest.stream.getAudioTracks());
     const stream = new MediaStream(tracks);
@@ -1690,12 +1766,13 @@
     rec.onstop = () => {
       const ex = S.exporting; S.exporting = null;
       tracks.forEach((t) => t.kind === 'video' && t.stop());
-      $('busy').hidden = true; $('btnExport').textContent = 'Export WebM';
+      $('busy').hidden = true; $('btnExport').textContent = 'Export Video';
       if (!ex || ex.cancelled) { setStatus('Export cancelled'); return; }
-      const blob = new Blob(chunks, { type: 'video/webm' });
-      download(blob, `kutlabz-export-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.webm`);
-      setStatus(`Exported ${fmt(S.total)} · ${(blob.size / 1048576).toFixed(1)} MB`);
-      toast('Export complete — WebM downloaded');
+      const type = isMp4 ? 'video/mp4' : 'video/webm', ext = isMp4 ? 'mp4' : 'webm';
+      const blob = new Blob(chunks, { type });
+      const name = `kutlabz-${S.aspect === '9:16' ? 'reel' : 'export'}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.${ext}`;
+      setStatus(`Exported ${fmt(S.total)} · ${(blob.size / 1048576).toFixed(1)} MB ${ext.toUpperCase()}`);
+      deliverExport(blob, name, ext);
     };
     $('busy').hidden = false; $('busy').classList.add('light');
     $('busyCancel').hidden = false; $('busyCancel').onclick = cancelExport;
@@ -1703,6 +1780,23 @@
     toast('Exporting in real time — keep this tab visible');
     rec.start(1000);
     play();
+  }
+  /* phones: hand the file to the share sheet (Instagram, TikTok, YouTube, Photos…); otherwise download */
+  async function deliverExport(blob, name, ext) {
+    const file = new File([blob], name, { type: blob.type });
+    const canShare = navigator.canShare && navigator.share && (() => { try { return navigator.canShare({ files: [file] }); } catch (e) { return false; } })();
+    if (canShare && document.body.classList.contains('mobile')) {
+      const v = await dialog({
+        title: 'Your video is ready', ok: 'Share…',
+        note: `${ext.toUpperCase()} · ${(blob.size / 1048576).toFixed(1)} MB · ${canvas.width}×${canvas.height}. Share opens your phone's share sheet: post to Instagram, TikTok or YouTube, or save to Photos.${ext === 'webm' ? ' This browser records WebM; some apps need MP4.' : ''}`,
+      });
+      if (v) {
+        try { await navigator.share({ files: [file], title: 'KutLabz edit' }); toast('Shared'); return; }
+        catch (e) { if (e.name === 'AbortError') { toast('Share cancelled — use Export again to retry, or the file is saved below'); } }
+      }
+    }
+    download(blob, name);
+    toast(`Export complete — ${ext.toUpperCase()} downloaded`);
   }
   function finishExport() { const ex = S.exporting; if (ex && ex.rec.state !== 'inactive') setTimeout(() => ex.rec.state !== 'inactive' && ex.rec.stop(), 150); }
   function cancelExport() { const ex = S.exporting; if (!ex) return; ex.cancelled = true; pause(); if (ex.rec.state !== 'inactive') ex.rec.stop(); }

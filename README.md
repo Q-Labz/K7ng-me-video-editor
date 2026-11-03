@@ -2,6 +2,17 @@
 
 A video editor that runs entirely in the browser. No build step, no server-side processing and no uploads: all decoding, analysis, grading and export happen on your machine.
 
+## Mobile — Reels, TikTok, Shorts
+
+On phones and small tablets the editor switches to a mobile layout automatically:
+
+- **Vertical first:** a full-height 9:16 preview (1080×1920 output), with the timeline and a bottom tab bar for **Edit · AI · Look · Create · Assistant**. Each tab opens a bottom sheet.
+- **Make a Reel:** one tap takes raw footage to a finished vertical short. It reframes to 9:16 so the subject stays in frame, cuts silence and dead frames, trims to 15 / 30 / 60 / 90 s using the strongest moments, and levels the audio (optionally with voice enhance). Every step is undoable. Also available on desktop under **Edit → Make a Reel…**.
+- **Safe-zone guides:** the **Guides** button cycles through TikTok, Reels and Shorts overlays. They show where each app's buttons and captions cover the frame, and are never exported.
+- **Touch timeline:** tap a clip to select it, then drag it to move or drag its handles to trim. One finger pans, two fingers pinch to zoom, and a tap on empty track moves the playhead.
+- **Export to apps:** export prefers MP4 (H.264/AAC) wherever the browser can record it, which is what Instagram, TikTok and YouTube want. On phones, **Share…** opens the system share sheet so the video goes straight to an app or to Photos.
+- **Install:** "Add to Home Screen" (iOS Safari) or "Install app" (Android Chrome) runs KutLabz full-screen like a native app, and the app shell works offline. On Android, the installed app also appears in the share sheet, so you can share videos from your gallery straight into the editor.
+
 ## Run
 
 Open `index.html` through any static server, for example:
@@ -25,7 +36,7 @@ Opening the file directly (`file://`) also works in most browsers. The camera ne
 | **Color** | WebGL shader pipeline: exposure, contrast, highlights, shadows, temperature, tint, saturation, vibrance, vignette, fade. Hold **Raw** (or `\`) to compare against the ungraded image. |
 | **Creative LUTs** | 8 built-in 33³ looks, plus **Import .cube** (3D LUTs, any size up to 129³) with an intensity control. |
 | **Aspect** | Source, 16:9, 9:16, 1:1, 4:5 output. |
-| **Export** | **Frame PNG** at full output resolution. **Export WebM** renders the timeline in real time (VP9/VP8 + Opus) through `MediaRecorder`. |
+| **Export** | **Frame PNG** at full output resolution. **Export Video** renders the timeline in real time through `MediaRecorder`: MP4 (H.264 + AAC) where the browser supports it, otherwise WebM (VP9/VP8 + Opus). |
 
 ### AI tools (local heuristics, no models or network)
 
