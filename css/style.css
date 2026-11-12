@@ -306,7 +306,8 @@ body.mobile .transport { gap: 6px; padding: 6px 10px; flex-wrap: nowrap; }
 body.mobile .tc { min-width: 0; font-size: 11px; }
 body.mobile .tbtns { gap: 6px; }
 body.mobile #btnStart, body.mobile #btnEnd { display: none; }
-body.mobile .timeline-wrap { height: 176px; }
+body.mobile { --m-tl: 176px; }
+body.mobile .timeline-wrap { height: var(--m-tl); }
 body.mobile .tl-head { padding: 4px 12px; }
 body.mobile .tl-tools > :not(#btnFit) { display: none; }
 body.mobile .tl-scroll { touch-action: none; padding: 0 12px 6px; }
@@ -338,10 +339,11 @@ body.mobile .panel.left section:first-child { display: none; } /* assets list: i
 .mact.hero small { color: #3a3a37; }
 body.mobile .dlg { align-items: flex-end; padding: 0; }
 body.mobile .dlg-card { width: 100%; border-radius: 12px 12px 0 0; padding-bottom: max(24px, env(safe-area-inset-bottom)); }
-body.mobile .toast { bottom: auto; top: calc(60px + env(safe-area-inset-top)); transform: translate(-50%, -12px); max-width: 92vw; text-align: center; }
+/* toasts sit just above the transport: clear of the prompt bar (top) and the controls / timeline / tab bar (bottom) */
+body.mobile .toast { top: auto; bottom: calc(var(--m-tl) + 114px + env(safe-area-inset-bottom)); transform: translate(-50%, 12px); max-width: 92vw; text-align: center; }
 body.mobile .toast.show { transform: translate(-50%, 0); }
 body.mobile .dlg-field input, body.mobile .dlg-field textarea, body.mobile .dlg-field select, body.mobile .chat-input textarea, body.mobile .chat-key input { font-size: 16px; } /* stops iOS zooming on focus */
-@media (orientation: landscape) and (max-height: 520px) { body.mobile .timeline-wrap { height: 120px; } body.mobile .panel.left, body.mobile .panel.right, body.mobile .msheet { max-height: 80dvh; } }
+@media (orientation: landscape) and (max-height: 520px) { body.mobile { --m-tl: 120px; } body.mobile .toast { bottom: calc(52px + env(safe-area-inset-bottom)); } /* no room above the transport: briefly over the timeline */ body.mobile .panel.left, body.mobile .panel.right, body.mobile .msheet { max-height: 80dvh; } }
 
 /* ================= Prompt bar + recipes ================= */
 .promptbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--carbon); border-bottom: 1px solid var(--line); }
