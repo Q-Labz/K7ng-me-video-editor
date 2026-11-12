@@ -2,25 +2,41 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>KutLabz — AI Video Studio</title>
+<meta name="description" content="Browser-native video editor. Decode, grade and export run locally — nothing uploads.">
+<meta name="theme-color" content="#0A0A0A">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="KutLabz">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 96 96%22%3E%3Crect width=%2296%22 height=%2296%22 rx=%2220%22 fill=%22%23141414%22/%3E%3Cg fill=%22%23D4A017%22%3E%3Crect x=%2222%22 y=%2222%22 width=%2212%22 height=%2252%22/%3E%3Cpath d=%22M40 48 66 22h13L53 48l26 26H66z%22/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400&family=Syne:wght@500;600;700&display=swap">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 <div id="app">
   <header class="topbar">
     <div class="brand">
-      <span class="logo">◐</span>
-      <div class="brand-text"><strong>KutLabz</strong><span class="ai-badge">AI</span><em>Video Studio</em></div>
+      <svg class="mark" viewBox="0 0 96 96" aria-hidden="true"><rect x="12" y="12" width="16" height="72"/><path d="M36 48 72 12h18L54 48l36 36H72z"/></svg>
+      <div class="brand-text"><strong>KutLabz</strong><em>Video Studio</em></div>
     </div>
     <div class="top-actions">
-      <button id="btnImport" class="btn primary">＋ Import Media</button>
-      <button id="btnCamera" class="btn">📷 Camera</button>
-      <button id="btnFrame" class="btn">🖼 Frame PNG</button>
-      <button id="btnExport" class="btn accent">⬇ Export WebM</button>
+      <button id="btnImport" class="btn">Import</button>
+      <button id="btnStudio" class="btn" title="Photo editor: layers, retouch, adjust, enhance">Image Studio</button>
+      <button id="btnScreen" class="btn" title="Record your screen with narration">Screen</button>
+      <button id="btnCamera" class="btn">Camera</button>
+      <button id="btnFrame" class="btn">Frame PNG</button>
+      <button id="btnExport" class="btn primary">Export Video</button>
       <input id="fileInput" type="file" accept="video/*,image/*" multiple hidden>
       <input id="cubeInput" type="file" accept=".cube" hidden>
       <input id="refInput" type="file" accept="image/*" hidden>
+      <input id="musicInput" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac" hidden>
+      <input id="srtInput" type="file" accept=".srt,.vtt,text/vtt" hidden>
     </div>
   </header>
   <div class="hint">Space play · ←/→ seek 1s (Shift: 5s) · S split (Shift+S at cuts) · Del remove clip · Ctrl+Z undo · drag clips to reorder · drag edges to trim · drop files anywhere</div>
@@ -33,14 +49,43 @@
       </section>
       <section>
         <h3>AI TOOLS</h3>
+        <h4 class="tool-group">Edit</h4>
         <div class="tools">
-          <button class="tool" data-tool="autograde"><b>⚡ Auto Grade</b><small>exposure · white balance · contrast · saturation</small></button>
-          <button class="tool" data-tool="scenes"><b>✂️ Detect Scene Cuts</b><small>visual change analysis → cut markers</small></button>
-          <button class="tool" data-tool="silence"><b>🔇 Detect Silence</b><small>audio RMS analysis → red zones</small></button>
-          <button class="tool" data-tool="applysilence"><b>✔ Apply Silence Cuts</b><small>split clip, removing marked silences</small></button>
-          <button class="tool" data-tool="colormatch"><b>🎨 AI Color Match…</b><small>grade footage to a reference image</small></button>
-          <button class="tool" data-tool="reframe"><b>🎯 Smart Reframe</b><small>auto punch-in on motion center</small></button>
-          <button class="tool" data-tool="resetframe"><b>↺ Reset Framing</b></button>
+          <button class="tool" data-tool="reel"><b>Make a Reel…</b><small>9:16 · cut dead air · trim to length · level</small></button>
+          <button class="tool" data-tool="scenes"><b>Detect Scene Cuts</b><small>visual change analysis → cut markers</small></button>
+          <button class="tool" data-tool="highlight"><b>Highlight Reel…</b><small>keep the strongest 15–90 s by motion + audio</small></button>
+          <button class="tool" data-tool="deadframes"><b>Detect Dead Frames</b><small>black and frozen stretches → marked zones</small></button>
+          <button class="tool" data-tool="applysilence"><b>Cut Marked Zones</b><small>remove marked silence and dead frames</small></button>
+        </div>
+        <h4 class="tool-group">Audio</h4>
+        <div class="tools">
+          <button class="tool" data-tool="silence"><b>Detect Silence</b><small>audio RMS analysis → red zones</small></button>
+          <button class="tool" data-tool="loudness"><b>Loudness Match</b><small>level every clip to one loudness</small></button>
+          <button class="tool" data-tool="voice"><b>Voice Enhance</b><small>rumble cut · de-mud · presence · compression</small></button>
+          <button class="tool" data-tool="music"><b>Add Music Bed…</b><small>beat detection · auto duck under dialogue</small></button>
+          <button class="tool" data-tool="beatcut"><b>Cut to Beat</b><small>snap every cut to the music grid</small></button>
+        </div>
+        <h4 class="tool-group">Color</h4>
+        <div class="tools">
+          <button class="tool" data-tool="autograde"><b>Auto Grade</b><small>exposure · white balance · contrast · saturation</small></button>
+          <button class="tool" data-tool="matchshots"><b>Match Shots</b><small>match every clip to the selected one</small></button>
+          <button class="tool" data-tool="colormatch"><b>AI Color Match…</b><small>grade footage to a reference image</small></button>
+        </div>
+        <h4 class="tool-group">Framing</h4>
+        <div class="tools">
+          <button class="tool" data-tool="reframe"><b>Smart Reframe</b><small>auto punch-in on motion center</small></button>
+          <button class="tool" data-tool="stabilize"><b>Stabilize</b><small>measure shake, smooth with a steady crop</small></button>
+          <button class="tool" data-tool="autozoom"><b>Auto Zoom</b><small>screen recordings: push in on activity</small></button>
+          <button class="tool" data-tool="resetframe"><b>Reset Framing</b></button>
+        </div>
+        <h4 class="tool-group">Content</h4>
+        <div class="tools">
+          <button class="tool" data-tool="title"><b>Add Text…</b><small>title · lower third · caption at the playhead</small></button>
+          <button class="tool" data-tool="captions"><b>Import Captions…</b><small>.srt or .vtt, burned into the export</small></button>
+          <button class="tool" data-tool="thumbnail"><b>Best Thumbnail</b><small>score frames, save the strongest as PNG</small></button>
+          <button class="tool" data-tool="chapters"><b>Chapters…</b><small>YouTube chapter list from cuts and titles</small></button>
+          <button class="tool" data-tool="studio"><b>Image Studio</b><small>layers · retouch · adjust · AI enhance</small></button>
+          <button class="tool" data-tool="screen"><b>Record Screen…</b><small>screen + narration straight to the timeline</small></button>
         </div>
       </section>
     </aside>
@@ -49,7 +94,7 @@
       <div id="stage" class="stage">
         <canvas id="view" width="1280" height="720"></canvas>
         <div id="empty" class="empty">
-          <div class="empty-icon">🎬</div>
+          <div class="empty-icon"><svg class="mark" viewBox="0 0 96 96" aria-hidden="true"><rect x="12" y="12" width="16" height="72"/><path d="M36 48 72 12h18L54 48l36 36H72z"/></svg></div>
           <p>No media loaded — import a video or open the camera</p>
           <small>Everything runs locally in your browser.</small>
         </div>
@@ -64,10 +109,10 @@
         <span id="tcLeft" class="tc">0:00.0 / 0:00.0</span>
         <button id="btnRaw" class="btn small" title="Hold to view ungraded (or hold \ )">Hold: Raw</button>
         <div class="tbtns">
-          <button id="btnStart" class="icon" title="Go to start (Home)">⏮</button>
-          <button id="btnPlay" class="icon play" title="Play / pause (Space)">▶</button>
-          <button id="btnEnd" class="icon" title="Go to end (End)">⏭</button>
-          <button id="btnMute" class="icon" title="Mute (M)">🔊</button>
+          <button id="btnStart" class="icon" title="Go to start (Home)">|◀&#xFE0E;</button>
+          <button id="btnPlay" class="icon play" title="Play / pause (Space)">▶&#xFE0E;</button>
+          <button id="btnEnd" class="icon" title="Go to end (End)">▶&#xFE0E;|</button>
+          <button id="btnMute" class="icon" title="Mute (M)">VOL</button>
         </div>
         <select id="aspect" title="Output aspect ratio">
           <option value="source">Source aspect</option>
@@ -82,6 +127,8 @@
     </section>
 
     <aside class="panel right">
+      <div class="tabs" role="tablist"><button class="tab on" data-tab="grade" role="tab">Grade</button><button class="tab" data-tab="chat" role="tab">Assistant</button></div>
+      <div id="tabGrade" class="tabpane">
       <section>
         <h3>CREATIVE LUTS</h3>
         <div id="lutGrid" class="lut-grid"></div>
@@ -92,9 +139,27 @@
         <div id="controls"></div>
         <div class="row">
           <button id="btnResetColor" class="btn small">Reset Color</button>
-          <button id="btnCube" class="btn small">⬆ Import .cube LUT</button>
+          <button id="btnCube" class="btn small">Import .cube</button>
         </div>
       </section>
+      </div>
+      <div id="chatPanel" class="tabpane chat" hidden>
+        <div class="chat-head"><span id="chatMode"></span><button id="chatConnect" class="btn small"></button></div>
+        <div id="chatKeyBox" class="chat-key" hidden>
+          <p>Your Anthropic API key. Requests go from this browser straight to api.anthropic.com with the conversation and a text summary of the timeline — never your media. Usage is billed to your key.</p>
+          <input id="chatKey" type="password" placeholder="sk-ant-…" autocomplete="off">
+          <label class="chk"><input id="chatRemember" type="checkbox"> Remember on this device</label>
+          <button id="chatKeySave" class="btn small primary">Connect</button>
+        </div>
+        <div id="chatLog" class="chat-log" aria-live="polite"></div>
+        <div class="chat-suggest">
+          <button>Cut the silences and level the audio</button>
+          <button>Make a 30 second highlight reel</button>
+          <button>Vertical for TikTok</button>
+          <button>Warmer and a bit brighter</button>
+        </div>
+        <div class="chat-input"><textarea id="chatInput" rows="2" placeholder="Describe an edit…"></textarea><button id="chatSend" class="btn small primary">Send</button></div>
+      </div>
     </aside>
   </main>
 
@@ -102,11 +167,11 @@
     <div class="tl-head">
       <h3>TIMELINE</h3>
       <div class="tl-tools">
-        <button id="btnSplit" class="btn small" title="Split at playhead (S)">✂ Split</button>
-        <button id="btnSplitCuts" class="btn small" title="Split every clip at its scene-cut markers (Shift+S)">✂ Split at cuts</button>
-        <button id="btnDelete" class="btn small" title="Delete selected clip (Del)">🗑 Delete</button>
-        <button id="btnUndo" class="btn small" title="Undo (Ctrl+Z)">↶ Undo</button>
-        <button id="btnRedo" class="btn small" title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
+        <button id="btnSplit" class="btn small" title="Split at playhead (S)">Split</button>
+        <button id="btnSplitCuts" class="btn small" title="Split every clip at its scene-cut markers (Shift+S)">Split at cuts</button>
+        <button id="btnDelete" class="btn small" title="Delete selected clip (Del)">Delete</button>
+        <button id="btnUndo" class="btn small" title="Undo (Ctrl+Z)">Undo</button>
+        <button id="btnRedo" class="btn small" title="Redo (Ctrl+Shift+Z)">Redo</button>
         <button id="btnClearMarks" class="btn small" title="Clear cut markers and silence zones">Clear marks</button>
         <label class="zoom">Zoom <input id="zoom" type="range" min="0" max="1" step="0.001" value="0.3"></label>
         <button id="btnFit" class="btn small">Fit</button>
@@ -115,7 +180,9 @@
     <div id="tlScroll" class="tl-scroll">
       <div id="tlInner" class="tl-inner">
         <canvas id="ruler" class="ruler" height="22"></canvas>
+        <div id="textLane" class="lane text-lane" title="Text lane — titles, lower thirds and captions"></div>
         <div id="track" class="track"></div>
+        <div id="musicLane" class="lane music-lane" hidden></div>
         <div id="playhead" class="playhead"><i></i></div>
       </div>
     </div>
@@ -125,9 +192,20 @@
 </div>
 <div id="dropOverlay" class="drop-overlay" hidden><div>Drop video or image files to import</div></div>
 <div id="toast" class="toast"></div>
+<div id="dlg" class="dlg" hidden>
+  <form id="dlgForm" class="dlg-card">
+    <h3 id="dlgTitle"></h3>
+    <div id="dlgBody"></div>
+    <div class="dlg-actions"><button type="button" id="dlgCancel" class="btn">Cancel</button><button type="submit" id="dlgOk" class="btn primary">OK</button></div>
+  </form>
+</div>
 <script src="js/luts.js"></script>
 <script src="js/gl.js"></script>
 <script src="js/analysis.js"></script>
 <script src="js/app.js"></script>
+<script src="js/studio.js"></script>
+<script src="js/chat.js"></script>
+<script src="js/mobile.js"></script>
+<script>if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});</script>
 </body>
 </html>

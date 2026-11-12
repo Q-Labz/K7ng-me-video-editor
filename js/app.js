@@ -31,6 +31,7 @@
     aspect: 'source', camera: null, exporting: null, busy: null,
     dirty: true, lastEl: null, history: [], future: [],
     actx: null, monitor: null, recDest: null,
+    texts: [], selText: null, music: null, voiceAn: null, duckLevel: 1,
   };
 
   let R;
@@ -44,7 +45,9 @@
     return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0') + '.' + d;
   }
   let toastTimer;
+  const toastLog = [];
   function toast(msg, err) {
+    toastLog.push({ msg, err: !!err, t: Date.now() }); if (toastLog.length > 40) toastLog.shift();
     const el = $('toast'); el.textContent = msg; el.className = 'toast show' + (err ? ' err' : '');
     clearTimeout(toastTimer); toastTimer = setTimeout(() => (el.className = 'toast'), err ? 5000 : 3200);
   }
@@ -69,16 +72,47 @@
       S.recDest = S.actx.createMediaStreamDestination();
     }
     for (const a of S.assets) attachAudio(a);
+    attachMusic();
     if (S.actx.state === 'suspended') S.actx.resume().catch(() => {});
     return S.actx;
   }
+  // Per-asset chain: source → rumble cut → mud cut → presence → compressor → clip gain → outputs.
+  // Per-clip settings (gain, voice enhance) are applied whenever playback enters a clip.
   function attachAudio(a) {
     if (!S.actx || a.kind !== 'video' || a.audioNode) return;
     try {
-      a.audioNode = S.actx.createMediaElementSource(a.el);
-      a.audioNode.connect(S.monitor);
-      a.audioNode.connect(S.recDest);
+      const ac = S.actx;
+      if (!S.voiceAn) { S.voiceAn = ac.createAnalyser(); S.voiceAn.fftSize = 1024; S.voiceBuf = new Float32Array(S.voiceAn.fftSize); }
+      a.audioNode = ac.createMediaElementSource(a.el);
+      const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.Q.value = 0.7;
+      const mud = ac.createBiquadFilter(); mud.type = 'peaking'; mud.frequency.value = 300; mud.Q.value = 1;
+      const pres = ac.createBiquadFilter(); pres.type = 'peaking'; pres.frequency.value = 3200; pres.Q.value = 0.9;
+      const comp = ac.createDynamicsCompressor();
+      const g = ac.createGain();
+      a.audioNode.connect(hp); hp.connect(mud); mud.connect(pres); pres.connect(comp); comp.connect(g);
+      g.connect(S.monitor); g.connect(S.recDest); g.connect(S.voiceAn);
+      a.chain = { hp, mud, pres, comp, g };
+      setChain(a, 1, false);
     } catch (e) { console.warn('audio attach failed', e); }
+  }
+  function setChain(a, gain, enhance) {
+    const c = a.chain; if (!c) return;
+    const t = S.actx.currentTime, k = 0.015;
+    c.hp.frequency.setTargetAtTime(enhance ? 90 : 10, t, k);
+    c.mud.gain.setTargetAtTime(enhance ? -2.5 : 0, t, k);
+    c.pres.gain.setTargetAtTime(enhance ? 4 : 0, t, k);
+    c.comp.threshold.setTargetAtTime(enhance ? -26 : 0, t, k);
+    c.comp.ratio.setTargetAtTime(enhance ? 3.5 : 1, t, k);
+    c.comp.knee.setTargetAtTime(enhance ? 8 : 0, t, k);
+    c.comp.attack.value = 0.005; c.comp.release.value = 0.2;
+    c.g.gain.setTargetAtTime(gain * (enhance ? 1.5 : 1), t, k);
+  }
+  function applyClipAudio(c, a) { if (a && a.chain) setChain(a, c.gain ?? 1, !!c.enhance); }
+  function attachMusic() {
+    const m = S.music; if (!S.actx || !m || m.node) return;
+    m.node = S.actx.createMediaElementSource(m.el);
+    m.gainNode = S.actx.createGain(); m.gainNode.gain.value = m.vol;
+    m.node.connect(m.gainNode); m.gainNode.connect(S.monitor); m.gainNode.connect(S.recDest);
   }
   ['pointerdown', 'keydown'].forEach((ev) => window.addEventListener(ev, () => { if (S.assets.length) ensureAudio(); }, { capture: true }));
 
@@ -103,14 +137,15 @@
     const rf = loc && loc.clip.reframe;
     if (rf && rf.keys && rf.keys.length) {
       fr.scale = rf.scale || 1;
-      const k = rf.keys, t = loc.src;
+      const k = rf.keys, t = loc.src, ks = (key) => key.s ?? fr.scale;
       let lo = 0, hi = k.length - 1;
-      if (t <= k[0].t) { fr.cx = k[0].x; fr.cy = k[0].y; }
-      else if (t >= k[hi].t) { fr.cx = k[hi].x; fr.cy = k[hi].y; }
+      if (t <= k[0].t) { fr.cx = k[0].x; fr.cy = k[0].y; fr.scale = ks(k[0]); }
+      else if (t >= k[hi].t) { fr.cx = k[hi].x; fr.cy = k[hi].y; fr.scale = ks(k[hi]); }
       else {
         while (hi - lo > 1) { const m = (lo + hi) >> 1; if (k[m].t <= t) lo = m; else hi = m; }
         const f = (t - k[lo].t) / (k[hi].t - k[lo].t || 1);
         fr.cx = k[lo].x + (k[hi].x - k[lo].x) * f; fr.cy = k[lo].y + (k[hi].y - k[lo].y) * f;
+        fr.scale = ks(k[lo]) + (ks(k[hi]) - ks(k[lo])) * f; // per-key zoom (Auto Zoom)
       }
     }
     return fr;
@@ -141,6 +176,7 @@
     const a = assetById(c.assetId);
     S.activeIdx = i;
     pauseAllExcept(a.el);
+    applyClipAudio(c, a);
     if (a.kind === 'video') {
       const target = src ?? c.in;
       if (Math.abs(a.el.currentTime - target) > 0.04) a.el.currentTime = target;
@@ -157,12 +193,14 @@
     S.playing = true;
     const loc = locate(S.time);
     enterClip(loc.i, loc.src);
+    syncMusic(true);
     $('btnPlay').textContent = '❚❚';
   }
   function pause() {
     S.playing = false;
     pauseAllExcept(null);
-    $('btnPlay').textContent = '▶';
+    if (S.music) S.music.el.pause();
+    $('btnPlay').textContent = '▶\uFE0E';
     S.dirty = true;
   }
   function togglePlay() { S.playing ? pause() : play(); }
@@ -171,7 +209,31 @@
     S.time = clamp(t, 0, S.total);
     const loc = locate(S.time);
     if (loc) enterClip(loc.i, loc.src);
+    syncMusic(true);
     S.dirty = true;
+  }
+
+  /* music bed follows the timeline clock; drift beyond 150 ms is corrected */
+  function syncMusic(force) {
+    const m = S.music; if (!m) return;
+    const el = m.el, inRange = S.time < m.duration - 0.05;
+    if (!S.playing || !inRange) { if (!el.paused) el.pause(); if (force && inRange) el.currentTime = S.time; return; }
+    if (force || Math.abs(el.currentTime - S.time) > 0.15) el.currentTime = S.time;
+    if (el.paused) el.play().catch(() => {});
+  }
+  /* sidechain ducking: dip the music while the clips' own audio is active */
+  function duckMusic() {
+    const m = S.music; if (!m || !m.gainNode || !S.voiceAn) return;
+    let target = m.vol;
+    if (m.duck && S.playing) {
+      S.voiceAn.getFloatTimeDomainData(S.voiceBuf);
+      let sum = 0; for (let i = 0; i < S.voiceBuf.length; i++) sum += S.voiceBuf[i] * S.voiceBuf[i];
+      const rms = Math.sqrt(sum / S.voiceBuf.length);
+      S.duckLevel = rms > 0.015 ? 0.22 : S.duckLevel;
+      if (rms <= 0.015) S.duckLevel = Math.min(1, S.duckLevel + 0.012);
+      target = m.vol * S.duckLevel;
+    }
+    m.gainNode.gain.setTargetAtTime(target, S.actx.currentTime, 0.06);
   }
 
   function nextClip() {
@@ -208,14 +270,16 @@
       if (S.camera) {
         if (R.upload(S.camera.el)) R.draw(colorParams(), { fit: S.aspect === 'source' ? 'contain' : 'cover', scale: 1 }, S.raw);
       } else {
-        if (S.playing) advance(dt);
+        if (S.playing) { advance(dt); syncMusic(false); }
+        duckMusic();
+        updateOverlay();
         const loc = locate(S.time);
         if (loc && loc.asset) {
           const el = loc.asset.el;
           if (S.playing || S.dirty || el !== S.lastEl) {
             const isStatic = el.tagName === 'IMG' && el === S.lastEl && R.hasFrame;
             const ok = isStatic || R.upload(el);
-            if (ok) { S.lastEl = el; R.draw(colorParams(), framingFor(loc), S.raw); S.dirty = false; }
+            if (ok) { S.lastEl = el; R.draw(colorParams(loc), framingFor(loc), S.raw); S.dirty = false; }
           }
         } else if (S.dirty) { R.clear(); S.lastEl = null; S.dirty = false; }
       }
@@ -237,13 +301,98 @@
     requestAnimationFrame(loop);
   }
 
-  function colorParams() { return { ...S.color, lutAmt: S.lutId === 'none' ? 0 : S.lutAmt }; }
+  /* global grade + optional per-clip offsets written by Match Shots */
+  function colorParams(loc) {
+    const p = { ...S.color, lutAmt: S.lutId === 'none' ? 0 : S.lutAmt };
+    const adj = loc && loc.clip && loc.clip.adj;
+    if (adj) {
+      p.exposure = clamp(p.exposure + (adj.exposure || 0), -3, 3);
+      p.temperature = clamp(p.temperature + (adj.temperature || 0), -1.5, 1.5);
+      p.tint = clamp(p.tint + (adj.tint || 0), -1.5, 1.5);
+      p.saturation = clamp(p.saturation * (adj.saturation || 1), 0, 2.5);
+    }
+    return p;
+  }
+
+  /* ---------------- text overlay (titles, lower thirds, captions) ---------------- */
+  const ovCanvas = document.createElement('canvas');
+  let ovKey = '';
+  const TEXT_STYLES = { title: 'Title', lower: 'Lower third', caption: 'Caption' };
+  function wrapLines(g, text, maxW) {
+    const out = [];
+    for (const para of String(text).split('\n')) {
+      let line = '';
+      for (const word of para.split(/\s+/).filter(Boolean)) {
+        const test = line ? line + ' ' + word : word;
+        if (g.measureText(test).width > maxW && line) { out.push(line); line = word; } else line = test;
+      }
+      out.push(line);
+    }
+    return out;
+  }
+  function drawText(g, t, W, H, slot = 0) {
+    const u = Math.min(W, H) / 1080;
+    g.save(); // items of the same style that overlap in time stack instead of drawing over each other
+    if (slot) g.translate(0, (t.style === 'title' ? 1 : -1) * slot * Math.round(130 * u));
+    g.textBaseline = 'alphabetic';
+    if (t.style === 'title') {
+      const fs = Math.round(96 * u * (W >= H ? 1 : 0.8));
+      g.font = `700 ${fs}px Syne, sans-serif`; g.textAlign = 'center';
+      const lines = wrapLines(g, t.text, W * 0.82), lh = fs * 1.12;
+      let y = H / 2 - ((lines.length - 1) * lh) / 2 + fs * 0.35;
+      g.shadowColor = 'rgba(0,0,0,.55)'; g.shadowBlur = 24 * u;
+      g.fillStyle = '#E8E4DC';
+      for (const l of lines) { g.fillText(l, W / 2, y); y += lh; }
+      g.shadowBlur = 0;
+    } else if (t.style === 'lower') {
+      const fs = Math.round(44 * u), pad = 28 * u;
+      g.font = `600 ${fs}px Syne, sans-serif`; g.textAlign = 'left';
+      const lines = wrapLines(g, t.text, W * 0.6), lh = fs * 1.2;
+      const bw = Math.max(...lines.map((l) => g.measureText(l).width)) + pad * 2, bh = lines.length * lh + pad * 1.4;
+      const x = W * 0.06, y = H * 0.86 - bh;
+      g.fillStyle = 'rgba(10,10,10,.78)'; g.fillRect(x, y, bw, bh);
+      g.fillStyle = '#D4A017'; g.fillRect(x, y, 4 * u, bh);
+      g.fillStyle = '#E8E4DC';
+      lines.forEach((l, i) => g.fillText(l, x + pad, y + pad * 0.7 + fs + i * lh - fs * 0.1));
+    } else {
+      const fs = Math.round(46 * u * (W >= H ? 1 : 1.15)), padX = 22 * u, padY = 12 * u;
+      g.font = `600 ${fs}px Syne, sans-serif`; g.textAlign = 'center';
+      const lines = wrapLines(g, t.text, W * 0.8), lh = fs * 1.25;
+      let y = H * (W >= H ? 0.9 : 0.78) - (lines.length - 1) * lh;
+      for (const l of lines) {
+        const w = g.measureText(l).width;
+        g.fillStyle = 'rgba(10,10,10,.68)'; g.fillRect(W / 2 - w / 2 - padX, y - fs - padY * 0.2, w + padX * 2, fs + padY * 1.6);
+        g.fillStyle = '#E8E4DC'; g.fillText(l, W / 2, y); y += lh;
+      }
+    }
+    g.restore();
+  }
+  function updateOverlay(force) {
+    if (!R) return;
+    const vis = S.texts.filter((t) => S.time >= t.start && S.time < t.end);
+    const key = vis.map((t) => t.id + t.style + t.text).join('|') + '@' + canvas.width + 'x' + canvas.height;
+    if (key === ovKey && !force) return;
+    ovKey = key; S.dirty = true;
+    if (!vis.length) { R.setOverlay(null); return; }
+    ovCanvas.width = canvas.width; ovCanvas.height = canvas.height;
+    const g = ovCanvas.getContext('2d');
+    g.clearRect(0, 0, ovCanvas.width, ovCanvas.height);
+    const slots = {};
+    for (const t of vis) { const k = slots[t.style] = (slots[t.style] ?? -1) + 1; drawText(g, t, ovCanvas.width, ovCanvas.height, k); }
+    R.setOverlay(ovCanvas);
+  }
+  if (document.fonts && document.fonts.load) {
+    Promise.all(['700 48px Syne', '600 48px Syne'].map((f) => document.fonts.load(f))).then(() => { ovKey = ''; }).catch(() => {});
+  }
 
   /* ---------------- history ---------------- */
-  function snapshot() { return JSON.stringify(S.clips); }
+  function snapshot() { return JSON.stringify({ clips: S.clips, texts: S.texts }); }
   function pushHistory() { S.history.push(snapshot()); if (S.history.length > 150) S.history.shift(); S.future = []; }
   function restore(json) {
-    S.clips = JSON.parse(json).filter((c) => assetById(c.assetId));
+    const snap = JSON.parse(json);
+    S.clips = snap.clips.filter((c) => assetById(c.assetId));
+    S.texts = snap.texts || [];
+    if (S.selText && !S.texts.find((t) => t.id === S.selText)) S.selText = null;
     if (S.selected && !S.clips.find((c) => c.id === S.selected)) S.selected = null;
     afterEdit();
   }
@@ -303,6 +452,7 @@
       if (!el.videoWidth) throw new Error(`${file.name}: no video track (audio-only files aren't supported)`);
       a.duration = await fixDuration(el, opts.durationHint);
       a.width = el.videoWidth; a.height = el.videoHeight; a.el = el;
+      if (opts.screen) a.screen = true;
       el.addEventListener('seeked', () => { S.dirty = true; });
       el.addEventListener('loadeddata', () => { S.dirty = true; });
       if (el.readyState < 2) await waitEvent(el, 'loadeddata').catch(() => {});
@@ -397,7 +547,7 @@
       row.innerHTML = `${a.thumb ? `<img alt="">` : '<div class="ph"></div>'}<div class="meta"><div class="name"></div><div class="sub"></div></div><div><button class="add" title="Add to timeline">＋</button><button class="x" title="Remove asset">✕</button></div>`;
       if (a.thumb) row.querySelector('img').src = a.thumb;
       row.querySelector('.name').textContent = a.name;
-      row.querySelector('.sub').textContent = `${a.kind === 'video' ? '🎞' : '🖼'} ${fmt(a.duration)} · ${a.width}×${a.height}`;
+      row.querySelector('.sub').textContent = `${a.kind === 'video' ? 'VID' : 'IMG'} · ${fmt(a.duration)} · ${a.width}×${a.height}`;
       row.querySelector('.add').onclick = (e) => { e.stopPropagation(); addAssetToTimeline(a.id); };
       row.querySelector('.x').onclick = (e) => { e.stopPropagation(); removeAsset(a.id); };
       row.ondblclick = () => addAssetToTimeline(a.id);
@@ -435,7 +585,13 @@
       el.appendChild(strip);
       drawStrip(strip, c, a, w, th);
       const label = document.createElement('div'); label.className = 'label';
-      label.textContent = `${a.name} · ${fmt(clipDur(c))}${c.reframe ? ' · 🎯' : ''}`;
+      const tags = [];
+      if (c.reframe) tags.push({ stab: 'STAB', zoom: 'ZOOM' }[c.reframe.kind] || 'REFRAME');
+      if (c.adj) tags.push('MATCH');
+      if (c.gain && Math.abs(c.gain - 1) > 0.01) { const db = 20 * Math.log10(c.gain); tags.push((db >= 0 ? '+' : '') + db.toFixed(1) + ' dB'); }
+      if (c.enhance) tags.push('VOICE');
+      if (a.screen) tags.unshift('SCREEN');
+      label.textContent = [a.name, fmt(clipDur(c)), ...tags].join(' · ');
       el.appendChild(label);
       for (const z of a.silences) {
         const s = Math.max(z.start, c.in), e = Math.min(z.end, c.out);
@@ -443,6 +599,14 @@
         const zd = document.createElement('div'); zd.className = 'zone';
         zd.style.left = (s - c.in) * S.pps + 'px'; zd.style.width = (e - s) * S.pps + 'px';
         zd.title = `Silence ${fmt(s)}–${fmt(e)}`;
+        el.appendChild(zd);
+      }
+      for (const z of a.dead || []) {
+        const s = Math.max(z.start, c.in), e = Math.min(z.end, c.out);
+        if (e - s <= 0.01) continue;
+        const zd = document.createElement('div'); zd.className = 'zone dead';
+        zd.style.left = (s - c.in) * S.pps + 'px'; zd.style.width = (e - s) * S.pps + 'px';
+        zd.title = `${z.kind === 'black' ? 'Black' : 'Frozen'} frames ${fmt(s)}–${fmt(e)}`;
         el.appendChild(zd);
       }
       for (const t of a.sceneCuts) {
@@ -457,16 +621,72 @@
       el.append(hl, hr);
       track.appendChild(el);
     });
+    renderTextLane();
+    renderMusicLane();
     drawRuler();
     positionPlayhead();
     updateCanvasSize();
   }
 
+  const textLane = $('textLane'), musicLane = $('musicLane');
+  function renderTextLane() {
+    textLane.innerHTML = '';
+    const rowEnd = [-1, -1]; // two rows: captions prefer row 2, everything else row 1, overlaps take the other row
+    for (const t of S.texts) {
+      const b = document.createElement('div');
+      let row = t.style === 'caption' ? 1 : 0;
+      if (t.start < rowEnd[row] - 1e-3 && t.start >= rowEnd[1 - row] - 1e-3) row = 1 - row;
+      rowEnd[row] = Math.max(rowEnd[row], t.end);
+      b.className = 'tblock ' + t.style + (row ? ' row2' : '') + (t.id === S.selText ? ' sel' : '');
+      b.style.left = PAD + t.start * S.pps + 'px'; b.style.width = Math.max(4, (t.end - t.start) * S.pps) + 'px';
+      b.textContent = t.text.replace(/\n/g, ' '); b.title = `${TEXT_STYLES[t.style]} · ${fmt(t.start)}–${fmt(t.end)} · double-click to edit, Del to remove`;
+      b.dataset.id = t.id;
+      textLane.appendChild(b);
+    }
+  }
+  textLane.addEventListener('pointerdown', (e) => {
+    const b = e.target.closest('.tblock'); if (!b || S.exporting) return;
+    e.stopPropagation();
+    const t = S.texts.find((x) => x.id === b.dataset.id); if (!t) return;
+    S.selText = t.id; S.selected = null; seek(t.start + 0.001); renderTimeline();
+  });
+  textLane.addEventListener('dblclick', (e) => { const b = e.target.closest('.tblock'); if (b) editText(b.dataset.id); });
+
+  function renderMusicLane() {
+    const m = S.music;
+    musicLane.hidden = !m;
+    if (!m) return;
+    musicLane.innerHTML = '';
+    const wCss = Math.max(4, m.duration * S.pps);
+    const cv = document.createElement('canvas'); cv.className = 'wave';
+    const W = Math.min(16384, Math.round(wCss)), H = 30, k = W / wCss;
+    cv.width = W; cv.height = H; cv.style.left = PAD + 'px'; cv.style.width = wCss + 'px';
+    const g = cv.getContext('2d');
+    g.fillStyle = '#141414'; g.fillRect(0, 0, W, H);
+    if (m.peaks) {
+      g.fillStyle = 'rgba(138,138,133,.75)';
+      for (let px = 0; px < W; px++) { const v = m.peaks[Math.floor((px / k) / S.pps / 0.02)] || 0; const hh = Math.max(1, v * (H - 6)); g.fillRect(px, (H - hh) / 2, 1, hh); }
+    }
+    if (m.beats && S.pps * (m.beats[1] - m.beats[0] || 1) > 3) {
+      g.fillStyle = 'rgba(232,228,220,.55)';
+      m.beats.forEach((b, i) => g.fillRect(Math.round(b * S.pps * k), i % 4 ? H - 6 : 0, 1, i % 4 ? 6 : H));
+    }
+    const lab = document.createElement('div'); lab.className = 'mlabel';
+    lab.innerHTML = '<span></span><button class="duck"></button><button class="x" title="Remove music">✕</button>';
+    lab.querySelector('span').textContent = `${m.name}${m.bpm ? ` · ${m.bpm} BPM` : ''}`;
+    const dk = lab.querySelector('.duck'); dk.textContent = m.duck ? 'Duck on' : 'Duck off'; dk.classList.toggle('on', m.duck);
+    dk.title = 'Lower the music automatically while clip audio is playing';
+    dk.onclick = (e) => { e.stopPropagation(); m.duck = !m.duck; renderMusicLane(); setStatus(`Auto duck ${m.duck ? 'on' : 'off'}`); };
+    lab.querySelector('.x').onclick = (e) => { e.stopPropagation(); removeMusic(); };
+    musicLane.append(cv, lab);
+  }
+  musicLane.addEventListener('pointerdown', (e) => { if (e.target.closest('button') || S.exporting) return; drag = { type: 'scrub' }; seek(xToTime(e.clientX)); });
+
   function drawStrip(cv, c, a, wCss, hCss) {
     const W = Math.min(4096, Math.max(1, Math.round(wCss))), H = Math.max(10, Math.round(hCss));
     cv.width = W; cv.height = H;
     const g = cv.getContext('2d'); const sx = W / wCss;
-    g.fillStyle = '#1b2030'; g.fillRect(0, 0, W, H);
+    g.fillStyle = '#141414'; g.fillRect(0, 0, W, H);
     if (a.frames.length) {
       const f0 = a.frames[0].img, ar = (f0.naturalWidth || f0.width) / (f0.naturalHeight || f0.height);
       const tileW = H * ar;
@@ -478,7 +698,7 @@
       }
     }
     if (a.peaks) {
-      g.fillStyle = 'rgba(160,150,255,.85)';
+      g.fillStyle = 'rgba(232,228,220,.8)';
       const base = H - 3, amp = H * 0.38;
       for (let px = 0; px < W; px++) {
         const t = c.in + (px / sx) / S.pps;
@@ -498,16 +718,16 @@
     ruler.width = W; ruler.style.width = W + 'px';
     const g = ruler.getContext('2d');
     g.clearRect(0, 0, W, 22);
-    g.font = '10px system-ui, sans-serif'; g.textBaseline = 'top';
+    g.font = '10px "DM Mono", ui-monospace, monospace'; g.textBaseline = 'top';
     const step = niceStep(S.pps), minor = step / 5;
     const t0 = Math.max(0, (sl - PAD) / S.pps), t1 = (sl + W - PAD) / S.pps;
     for (let k = Math.floor(t0 / minor); k * minor <= t1; k++) {
       const t = Math.round(k * minor * 1000) / 1000;
       const x = Math.round(PAD + t * S.pps - sl) + 0.5;
       const major = k % 5 === 0;
-      g.fillStyle = t > S.total + 1e-6 ? '#2a2e39' : major ? '#8b91a1' : '#3a4050';
+      g.fillStyle = t > S.total + 1e-6 ? '#242424' : major ? '#8A8A85' : '#3a3a37';
       g.fillRect(x, major ? 10 : 15, 1, major ? 12 : 7);
-      if (major) { g.fillStyle = t > S.total + 1e-6 ? '#3a4050' : '#8b91a1'; g.fillText(step < 1 ? fmt(t) : fmt(t).replace(/\.0$/, ''), x + 3, 1); }
+      if (major) { g.fillStyle = t > S.total + 1e-6 ? '#3a3a37' : '#8A8A85'; g.fillText(step < 1 ? fmt(t) : fmt(t).replace(/\.0$/, ''), x + 3, 1); }
     }
   }
   function positionPlayhead() { playhead.style.left = PAD + S.time * S.pps + 'px'; }
@@ -531,18 +751,29 @@
 
   // --- timeline pointer interactions ---
   let drag = null;
+  const touches = new Map(); let pinch = null;
   function onTrackDown(e) {
     if (e.button !== 0 || S.exporting) return;
     const marker = e.target.closest('.marker');
     if (marker) { e.stopPropagation(); seek(+marker.dataset.t); return; }
     const clipEl = e.target.closest('.clip');
+    if (e.pointerType === 'touch') {
+      if (pinch || touches.size > 1) return; // second finger: the pinch handler owns it
+      const edgeT = e.target.dataset && e.target.dataset.edge;
+      const tid = clipEl && clipEl.dataset.id;
+      if (!edgeT && !(tid && tid === S.selected)) {
+        // a finger on empty track or an unselected clip pans the timeline; a tap (no movement) selects / seeks
+        drag = { type: 'pan', pid: e.pointerId, x0: e.clientX, sl0: tlScroll.scrollLeft, moved: false, tapClip: tid || null };
+        return;
+      }
+    }
     if (!clipEl) { // scrub
-      S.selected = null; renderTimeline();
+      S.selected = null; S.selText = null; renderTimeline();
       drag = { type: 'scrub' }; seek(xToTime(e.clientX));
       return;
     }
     const id = clipEl.dataset.id, idx = S.clips.findIndex((c) => c.id === id), c = S.clips[idx];
-    S.selected = id;
+    S.selected = id; S.selText = null;
     const edge = e.target.dataset.edge;
     if (edge) {
       pushHistory();
@@ -556,7 +787,16 @@
     e.preventDefault();
   }
   function onMove(e) {
+    if (touches.has(e.pointerId)) touches.set(e.pointerId, e.clientX);
+    if (pinch && touches.size >= 2) {
+      const [a, b] = [...touches.values()], d = Math.max(20, Math.abs(a - b));
+      const z = clamp(pinch.z + Math.log(d / pinch.d) / Math.log(100), 0, 1);
+      S.pps = ppsFromZoom(z); $('zoom').value = z; renderTimeline();
+      tlScroll.scrollLeft = PAD + pinch.t * S.pps - (pinch.mid - tlScroll.getBoundingClientRect().left);
+      return;
+    }
     if (!drag) return;
+    if (drag.type === 'pan') { if (e.pointerId !== drag.pid) return; const dx = e.clientX - drag.x0; if (Math.abs(dx) > 6) drag.moved = true; if (drag.moved) tlScroll.scrollLeft = drag.sl0 - dx; return; }
     if (drag.type === 'scrub') { seek(xToTime(e.clientX)); return; }
     const c = S.clips.find((x) => x.id === drag.id); if (!c) return;
     const a = assetById(c.assetId);
@@ -585,8 +825,19 @@
     }
   }
   function onUp(e) {
+    const wasPinch = !!pinch;
+    touches.delete(e.pointerId); if (touches.size < 2) pinch = null;
+    if (wasPinch) { drag = null; return; } // lifting a finger after a pinch is not a tap
     if (!drag) return;
+    if (drag.type === 'pan' && e.pointerId !== drag.pid) return;
     const d = drag; drag = null;
+    if (d.type === 'pan') {
+      if (!d.moved && e.type === 'pointerup') {
+        if (d.tapClip) { S.selected = d.tapClip; S.selText = null; renderTimeline(); setStatus('Clip selected — drag it to move, drag its edges to trim'); }
+        else { S.selected = null; S.selText = null; seek(xToTime(e.clientX)); renderTimeline(); }
+      }
+      return;
+    }
     if (d.type === 'trim') { afterEdit(); setStatus('Trimmed clip'); if (d.wasPlaying) play(); }
     else if (d.type === 'move') {
       if (d.moved && d.ins != null) {
@@ -599,6 +850,16 @@
     }
   }
   track.addEventListener('pointerdown', onTrackDown);
+  tlScroll.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'touch') return;
+    touches.set(e.pointerId, e.clientX);
+    if (touches.size === 2) {
+      const [a, b] = [...touches.values()], mid = (a + b) / 2;
+      pinch = { d: Math.max(20, Math.abs(a - b)), z: +$('zoom').value, mid, t: xToTime(mid) };
+      if (drag && drag.type === 'trim') afterEdit();
+      drag = null;
+    }
+  }, true);
   ruler.addEventListener('pointerdown', (e) => { if (S.exporting) return; drag = { type: 'scrub' }; seek(xToTime(e.clientX)); e.preventDefault(); });
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
@@ -633,6 +894,10 @@
     else { S.history.pop(); toast('Move the playhead inside a clip to split'); }
   }
   function deleteSelected() {
+    if (S.selText) {
+      pushHistory(); S.texts = S.texts.filter((t) => t.id !== S.selText); S.selText = null;
+      ovKey = ''; renderTimeline(); setStatus('Deleted text'); return;
+    }
     const i = S.clips.findIndex((c) => c.id === S.selected);
     if (i < 0) return toast('Select a clip first');
     pushHistory();
@@ -713,7 +978,7 @@
     },
     scenes() {
       const assets = targetAssets(); if (!assets.length) return toast('Import a video first');
-      runTask('Detecting scene cuts…', async (signal, progress) => {
+      return runTask('Detecting scene cuts…', async (signal, progress) => {
         let total = 0;
         for (let k = 0; k < assets.length; k++) {
           const a = assets[k];
@@ -728,14 +993,13 @@
     silence() {
       const assets = targetAssets(); if (!assets.length) return toast('Import a video first');
       const actx = ensureAudio(); if (!actx) return toast('Web Audio is not supported', true);
-      runTask('Analyzing audio…', async (signal, progress) => {
+      return runTask('Analyzing audio…', async (signal, progress) => {
         let zones = 0, secs = 0, noAudio = [];
         for (let k = 0; k < assets.length; k++) {
           const a = assets[k];
           progress(k / assets.length, `Decoding audio — ${a.name}`);
-          let buf;
-          try { buf = await actx.decodeAudioData(await a.file.arrayBuffer()); }
-          catch (e) { noAudio.push(a.name); continue; }
+          const buf = await getAudioBuffer(a);
+          if (!buf) { noAudio.push(a.name); continue; }
           if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
           progress((k + 0.6) / assets.length, `Measuring RMS — ${a.name}`);
           await new Promise((r) => setTimeout(r, 0));
@@ -745,17 +1009,18 @@
         }
         renderTimeline();
         if (noAudio.length) toast(`No decodable audio in: ${noAudio.join(', ')}`, true);
-        else toast(zones ? `Marked ${zones} silent zone${zones > 1 ? 's' : ''} (${secs.toFixed(1)}s) — “Apply Silence Cuts” to remove` : 'No silences found');
+        else toast(zones ? `Marked ${zones} silent zone${zones > 1 ? 's' : ''} (${secs.toFixed(1)}s) — “Cut Marked Zones” removes them` : 'No silences found');
         setStatus(`Silence detection: ${zones} zone${zones === 1 ? '' : 's'}, ${secs.toFixed(1)}s`);
       });
     },
     applysilence() {
-      if (!S.assets.some((a) => a.silences.length)) return toast('Run “Detect Silence” first');
+      const zonesOf = (a) => [...a.silences, ...(a.dead || [])];
+      if (!S.assets.some((a) => zonesOf(a).length)) return toast('Run “Detect Silence” or “Detect Dead Frames” first');
       pushHistory();
       let removed = 0; const next = [];
       for (const c of S.clips) {
         const a = assetById(c.assetId);
-        const zs = a.silences.filter((z) => z.end > c.in && z.start < c.out).sort((x, y) => x.start - y.start);
+        const zs = zonesOf(a).filter((z) => z.end > c.in && z.start < c.out).sort((x, y) => x.start - y.start);
         if (!zs.length || (S.selected && S.selected !== c.id && S.clips.some((x) => x.id === S.selected))) { next.push(c); continue; }
         let cur = c.in; let first = true;
         for (const z of zs) {
@@ -766,11 +1031,11 @@
         }
         if (c.out - cur >= MIN_CLIP) next.push({ ...c, id: first ? c.id : uid(), in: cur, out: c.out });
       }
-      if (removed < 0.01) { S.history.pop(); return toast('No silences inside the current clips'); }
+      if (removed < 0.01) { S.history.pop(); return toast('No marked zones inside the current clips'); }
       S.clips = next; S.selected = null;
       afterEdit();
-      toast(`Removed ${removed.toFixed(1)}s of silence — ${S.clips.length} clips now`);
-      setStatus(`Applied silence cuts (−${removed.toFixed(1)}s)`);
+      toast(`Removed ${removed.toFixed(1)}s of marked zones — ${S.clips.length} clips now`);
+      setStatus(`Cut marked zones (−${removed.toFixed(1)}s)`);
     },
     colormatch() {
       if (!S.clips.length) return toast('Import footage first, then pick a reference image');
@@ -779,7 +1044,7 @@
     reframe() {
       const clips = targetClips(); if (!clips.length) return toast('Import a video first');
       pushHistory();
-      runTask('Smart reframe: tracking motion…', async (signal, progress) => {
+      return runTask('Smart reframe: tracking motion…', async (signal, progress) => {
         for (let k = 0; k < clips.length; k++) {
           const c = clips[k], a = assetById(c.assetId);
           const keys = await Analysis.trackMotion(a.url, c.in, c.out, { signal, onProgress: (p) => progress((k + p) / clips.length, `Tracking ${a.name} (${k + 1}/${clips.length})… ${Math.round(p * 100)}%`) });
@@ -798,6 +1063,455 @@
       setStatus('Framing reset');
     },
   };
+  /* ---------------- shared helpers for the extended toolset ---------------- */
+  async function getAudioBuffer(a) {
+    if (a.audioBuf !== undefined) return a.audioBuf;
+    const actx = ensureAudio(); if (!actx) return null;
+    let buf = null;
+    try { buf = await actx.decodeAudioData(await a.file.arrayBuffer()); } catch (e) { buf = null; }
+    if (!buf || a.duration < 1200) a.audioBuf = buf; // cache decoded PCM for clips up to 20 min
+    return buf;
+  }
+  async function clipFrame(c, w = 96, h = 54, signal) {
+    const a = assetById(c.assetId);
+    if (a.kind === 'image') {
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+      const g = cv.getContext('2d', { willReadFrequently: true }); g.drawImage(a.el, 0, 0, w, h);
+      return g.getImageData(0, 0, w, h);
+    }
+    let out = null;
+    await Analysis.sampleFrames(a.url, [c.in + clipDur(c) / 2], (img) => { out = img; }, { w, h, signal });
+    return out;
+  }
+  async function frameReady() {
+    const loc = locate(S.time); if (!loc) return;
+    const el = loc.asset.el;
+    if (el.tagName === 'VIDEO') {
+      if (el.seeking) await new Promise((r) => el.addEventListener('seeked', r, { once: true }));
+      if (el.readyState < 2) await new Promise((r) => el.addEventListener('loadeddata', r, { once: true }));
+    }
+    await new Promise((r) => requestAnimationFrame(() => r()));
+  }
+  const checkAbort = (signal) => { if (signal.aborted) throw new DOMException('Aborted', 'AbortError'); };
+
+  /* ---------------- dialog ---------------- */
+  let dlgOpen = false, dlgClose = null;
+  function dialog({ title, fields = [], ok = 'OK', note }) {
+    return new Promise((resolve) => {
+      const box = $('dlg'), body = $('dlgBody'), form = $('dlgForm');
+      $('dlgTitle').textContent = title; $('dlgOk').textContent = ok;
+      body.innerHTML = '';
+      if (note) { const p = document.createElement('p'); p.className = 'dlg-note'; p.textContent = note; body.appendChild(p); }
+      const inputs = {};
+      for (const f of fields) {
+        const lab = document.createElement('label'); lab.className = 'dlg-field';
+        const sp = document.createElement('span'); sp.textContent = f.label; lab.appendChild(sp);
+        let inp;
+        if (f.type === 'select') {
+          inp = document.createElement('select');
+          for (const [v, t] of f.options) { const o = document.createElement('option'); o.value = v; o.textContent = t; inp.appendChild(o); }
+        } else if (f.type === 'textarea') { inp = document.createElement('textarea'); inp.rows = f.rows || 3; }
+        else { inp = document.createElement('input'); inp.type = f.type || 'text'; if (f.step) inp.step = f.step; if (f.min != null) inp.min = f.min; }
+        inp.value = f.value ?? '';
+        lab.appendChild(inp); body.appendChild(lab); inputs[f.k] = inp;
+      }
+      const close = (v) => { box.hidden = true; dlgOpen = false; dlgClose = null; form.onsubmit = null; $('dlgCancel').onclick = null; resolve(v); };
+      form.onsubmit = (e) => {
+        e.preventDefault();
+        const out = {}; for (const f of fields) out[f.k] = f.type === 'number' ? +inputs[f.k].value : inputs[f.k].value;
+        close(out);
+      };
+      $('dlgCancel').onclick = () => close(null);
+      dlgClose = () => close(null);
+      box.hidden = false; dlgOpen = true;
+      const first = body.querySelector('textarea, input, select'); if (first) setTimeout(() => first.focus(), 0);
+    });
+  }
+
+  /* ---------------- text items ---------------- */
+  async function editText(id) {
+    const t = S.texts.find((x) => x.id === id); if (!t) return;
+    const v = await dialog({
+      title: 'Edit text', ok: 'Save',
+      fields: [
+        { k: 'text', label: 'Text', type: 'textarea', value: t.text },
+        { k: 'style', label: 'Style', type: 'select', options: Object.entries(TEXT_STYLES), value: t.style },
+        { k: 'start', label: 'Start (s)', type: 'number', step: 0.01, min: 0, value: t.start },
+        { k: 'end', label: 'End (s)', type: 'number', step: 0.01, min: 0, value: t.end },
+      ],
+    });
+    if (!v || !v.text.trim()) return;
+    pushHistory();
+    Object.assign(t, { text: v.text.trim(), style: v.style, start: Math.max(0, v.start), end: Math.max(Math.max(0, v.start) + 0.2, v.end) });
+    S.texts.sort((a, b) => a.start - b.start);
+    ovKey = ''; renderTimeline(); setStatus('Text updated');
+  }
+  function parseSubs(raw) {
+    const txt = raw.replace(/\r/g, '').replace(/^﻿/, '');
+    const re = /(?:(\d{1,2}):)?(\d{1,2}):(\d{2})[,.](\d{1,3})\s*-->\s*(?:(\d{1,2}):)?(\d{1,2}):(\d{2})[,.](\d{1,3})[^\n]*\n([\s\S]*?)(?=\n[ \t]*\n|$)/g;
+    const sec = (h, m, s, ms) => (h ? +h : 0) * 3600 + +m * 60 + +s + +ms.padEnd(3, '0') / 1000;
+    const out = []; let m;
+    while ((m = re.exec(txt))) {
+      const text = m[9].replace(/<[^>]+>/g, '').replace(/\{\\[^}]*\}/g, '').trim();
+      if (!text) continue;
+      const start = sec(m[1], m[2], m[3], m[4]), end = sec(m[5], m[6], m[7], m[8]);
+      if (end > start) out.push({ id: uid(), text, style: 'caption', start: +start.toFixed(3), end: +end.toFixed(3) });
+    }
+    return out;
+  }
+  $('srtInput').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const items = parseSubs(await f.text());
+      if (!items.length) throw new Error('no cues found');
+      pushHistory();
+      S.texts = S.texts.filter((t) => t.style !== 'caption').concat(items).sort((a, b) => a.start - b.start);
+      ovKey = ''; renderTimeline();
+      toast(`Loaded ${items.length} captions from ${f.name}`);
+      setStatus('Captions loaded — double-click a caption on the text lane to edit it');
+    } catch (err) { toast(`Could not read captions: ${err.message}`, true); }
+  });
+
+  /* ---------------- music bed ---------------- */
+  function removeMusic(silent) {
+    const m = S.music; if (!m) return;
+    m.el.pause();
+    try { if (m.node) m.node.disconnect(); if (m.gainNode) m.gainNode.disconnect(); } catch (e) { /* already disconnected */ }
+    m.el.removeAttribute('src'); m.el.load(); URL.revokeObjectURL(m.url);
+    S.music = null; renderTimeline();
+    if (!silent) setStatus('Music removed');
+  }
+  $('musicInput').addEventListener('change', (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const actx = ensureAudio(); if (!actx) return toast('Web Audio is not supported', true);
+    runTask('Loading music…', async (signal, progress) => {
+      let buf;
+      try { buf = await actx.decodeAudioData(await f.arrayBuffer()); } catch (err) { throw new Error(`${f.name}: could not decode audio`); }
+      progress(0.35, 'Detecting beats…');
+      const res = await Analysis.detectBeats(buf, { signal });
+      removeMusic(true);
+      const url = URL.createObjectURL(f), el = new Audio(); el.preload = 'auto'; el.src = url;
+      S.music = { name: f.name, url, el, duration: buf.duration, beats: res.beats, bpm: res.bpm, peaks: res.peaks, duck: true, vol: 0.8 };
+      attachMusic(); syncMusic(true); renderTimeline();
+      toast(`Music bed added${res.bpm ? ` — ${res.bpm} BPM, ${res.beats.length} beats` : ''}. Auto duck is on.`);
+      setStatus('Music bed: plays under the edit and exports with it');
+    });
+  });
+
+  /* ---------------- extended AI toolset ---------------- */
+  Object.assign(tools, {
+    async highlight(len) {
+      const clips = S.clips.filter((c) => assetById(c.assetId).kind === 'video');
+      if (!clips.length) return toast('Import a video first');
+      const v = len ? { len } : await dialog({
+        title: 'Highlight Reel', ok: 'Build reel',
+        note: 'Scores every half second by motion, audio energy and visual interest, then keeps the strongest moments in their original order. Undo restores the full edit.',
+        fields: [{ k: 'len', label: 'Target length', type: 'select', options: [['15', '15 s'], ['30', '30 s'], ['60', '60 s'], ['90', '90 s']], value: '30' }],
+      });
+      if (!v) return;
+      const target = +v.len;
+      if (target >= S.total - 0.5) return toast(`The edit is already ${fmt(S.total)} — nothing to trim`);
+      return runTask('Highlight reel: scoring moments…', async (signal, progress) => {
+        const step = 0.5, samples = [];
+        for (let k = 0; k < clips.length; k++) {
+          const c = clips[k], a = assetById(c.assetId);
+          const prof = await Analysis.activityProfile(a.url, c.in, c.out, step, { signal, onProgress: (p) => progress((k + p * 0.9) / clips.length, `Scoring ${a.name}… ${Math.round(p * 100)}%`) });
+          const buf = await getAudioBuffer(a);
+          const loud = buf ? Analysis.loudnessProfile(buf, c.in + 0, c.out, step) : null;
+          prof.forEach((p, i) => samples.push({ c, t: p.t, motion: p.motion, interest: p.interest, loud: loud ? (loud[i] ?? -120) : -120 }));
+        }
+        if (!samples.length) throw new Error('Not enough footage to score');
+        const norm = (key) => {
+          const v = samples.map((s) => s[key]).sort((x, y) => x - y);
+          const lo = v[Math.floor(v.length * 0.05)], hi = v[Math.floor(v.length * 0.95)];
+          return (x) => (hi > lo ? clamp((x - lo) / (hi - lo), 0, 1) : 0.5);
+        };
+        const nm = norm('motion'), ni = norm('interest'), nl = norm('loud');
+        samples.forEach((s) => (s.score = 0.45 * nm(s.motion) + 0.35 * nl(s.loud) + 0.2 * ni(s.interest)));
+        const seg = clamp(target / 8, 1.5, 4), cands = [];
+        for (const c of clips) {
+          const ss = samples.filter((s) => s.c === c), len = Math.min(seg, clipDur(c));
+          for (let t0 = c.in; t0 <= c.out - len + 1e-6; t0 += Math.max(0.25, len / 2)) {
+            const inside = ss.filter((s) => s.t >= t0 && s.t < t0 + len);
+            if (inside.length) cands.push({ c, in: t0, out: t0 + len, score: inside.reduce((x, s) => x + s.score, 0) / inside.length });
+          }
+        }
+        cands.sort((x, y) => y.score - x.score);
+        const picked = []; let total = 0;
+        for (const k of cands) {
+          if (total >= target - 0.05) break;
+          if (picked.some((p) => p.c === k.c && k.in < p.out - 1e-6 && k.out > p.in + 1e-6)) continue;
+          const out = Math.min(k.out, k.in + Math.max(target - total, 0.5));
+          picked.push({ ...k, out }); total += out - k.in;
+        }
+        const order = (p) => S.clips.indexOf(p.c);
+        picked.sort((x, y) => order(x) - order(y) || x.in - y.in);
+        const merged = [];
+        for (const p of picked) { const l = merged[merged.length - 1]; if (l && l.c === p.c && Math.abs(l.out - p.in) < 0.05) l.out = p.out; else merged.push({ ...p }); }
+        pushHistory();
+        S.clips = merged.map((p) => ({ ...p.c, id: uid(), in: +p.in.toFixed(3), out: +p.out.toFixed(3) }));
+        S.selected = null; afterEdit(); fitZoom(); seek(0);
+        toast(`Highlight reel: ${merged.length} moments, ${fmt(S.total)}`);
+        setStatus(`Highlight reel built (${fmt(S.total)}) — Undo restores the full edit`);
+      });
+    },
+
+    deadframes() {
+      const assets = targetAssets(); if (!assets.length) return toast('Import a video first');
+      return runTask('Scanning for black and frozen frames…', async (signal, progress) => {
+        let n = 0, secs = 0;
+        for (let k = 0; k < assets.length; k++) {
+          const a = assets[k];
+          a.dead = await Analysis.detectDeadFrames(a.url, a.duration, { signal, onProgress: (p) => progress((k + p) / assets.length, `Scanning ${a.name}… ${Math.round(p * 100)}%`) });
+          n += a.dead.length; secs += a.dead.reduce((s, z) => s + z.end - z.start, 0);
+        }
+        renderTimeline();
+        toast(n ? `Marked ${n} dead stretch${n > 1 ? 'es' : ''} (${secs.toFixed(1)}s) — “Cut Marked Zones” removes them` : 'No black or frozen stretches found');
+        setStatus(`Dead frames: ${n} zone${n === 1 ? '' : 's'}, ${secs.toFixed(1)}s`);
+      });
+    },
+
+    loudness() {
+      const clips = targetClips(); if (!clips.length) return toast('Import a video first');
+      if (!ensureAudio()) return toast('Web Audio is not supported', true);
+      return runTask('Measuring loudness…', async (signal, progress) => {
+        const TARGET = -18, changes = []; let skipped = 0;
+        for (let k = 0; k < clips.length; k++) {
+          const c = clips[k], a = assetById(c.assetId);
+          progress(k / clips.length, `Measuring ${a.name} (${k + 1}/${clips.length})`);
+          const buf = await getAudioBuffer(a); checkAbort(signal);
+          if (!buf) { skipped++; continue; }
+          const m = Analysis.measureLoudness(buf, c.in, c.out);
+          if (m.db < -60) { skipped++; continue; }
+          const g = clamp(Math.min(Math.pow(10, (TARGET - m.db) / 20), 0.98 / Math.max(m.peak, 1e-4)), 0.25, 4);
+          changes.push([c, +g.toFixed(3)]);
+          await new Promise((r) => setTimeout(r, 0));
+        }
+        if (!changes.length) throw new Error('No clips with measurable audio');
+        pushHistory(); changes.forEach(([c, g]) => (c.gain = g)); afterEdit();
+        toast(`Leveled ${changes.length} clip${changes.length > 1 ? 's' : ''} to a common loudness${skipped ? ` (${skipped} silent or without audio skipped)` : ''}`);
+        setStatus('Loudness matched — per-clip gain shown on each clip');
+      });
+    },
+
+    voice() {
+      const clips = targetClips(); if (!clips.length) return toast('Import a video first');
+      ensureAudio();
+      const on = !clips.every((c) => c.enhance);
+      pushHistory(); clips.forEach((c) => (c.enhance = on)); afterEdit();
+      toast(on ? `Voice enhance on for ${clips.length} clip${clips.length > 1 ? 's' : ''}: rumble cut, de-mud, presence lift, gentle compression` : 'Voice enhance off');
+    },
+
+    music() { $('musicInput').value = ''; $('musicInput').click(); },
+
+    beatcut() {
+      const m = S.music; if (!m || m.beats.length < 2) return toast('Add a music bed first — the beat grid comes from the music');
+      if (!S.clips.length) return toast('Import footage first');
+      pushHistory();
+      const beats = m.beats, minLen = Math.max(MIN_CLIP, (beats[1] - beats[0]) * 0.5);
+      let t = 0, moved = 0;
+      for (const c of S.clips) {
+        const end = t + clipDur(c);
+        let b = -1; for (const x of beats) { if (x > end + 1e-3) break; if (x >= t + minLen) b = x; }
+        if (b > 0 && Math.abs(b - end) > 1e-3) { c.out = +(c.in + (b - t)).toFixed(3); moved++; }
+        t += clipDur(c);
+      }
+      if (!moved) { S.history.pop(); return toast('Cuts already land on the beat'); }
+      afterEdit();
+      toast(`Snapped ${moved} cut${moved > 1 ? 's' : ''} to the beat (${m.bpm} BPM)`);
+      setStatus('Cut to beat — each clip now ends on a beat');
+    },
+
+    matchshots() {
+      if (S.clips.length < 2) return toast('Add at least two clips to match');
+      const loc = locate(S.time);
+      const ref = S.clips.find((c) => c.id === S.selected) || (loc && loc.clip);
+      const refName = assetById(ref.assetId).name;
+      return runTask('Matching shots…', async (signal, progress) => {
+        const refImg = await clipFrame(ref, 96, 54, signal); if (!refImg) throw new Error('Reference frame not ready');
+        const rs = Analysis.frameStats(refImg), updates = [];
+        for (let k = 0; k < S.clips.length; k++) {
+          const c = S.clips[k]; checkAbort(signal);
+          progress(k / S.clips.length, `Analyzing shot ${k + 1}/${S.clips.length}`);
+          if (c === ref) { updates.push([c, null]); continue; }
+          const img = await clipFrame(c, 96, 54, signal); if (!img) continue;
+          const st = Analysis.frameStats(img), r2 = (x) => Math.round(x * 100) / 100;
+          updates.push([c, {
+            exposure: r2(clamp(Math.log2(rs.medLin / st.medLin) * 0.85, -1.5, 1.5)),
+            temperature: r2(clamp(st.temp - rs.temp, -1, 1)),
+            tint: r2(clamp(st.tint - rs.tint, -1, 1)),
+            saturation: r2(clamp(rs.chroma / Math.max(st.chroma, 0.02), 0.7, 1.4)),
+          }]);
+        }
+        pushHistory(); updates.forEach(([c, adj]) => (c.adj = adj)); afterEdit();
+        toast(`Matched ${updates.length - 1} shot${updates.length > 2 ? 's' : ''} to “${refName}” — Reset Color clears per-shot matches`);
+        setStatus('Shots matched (exposure, white balance, saturation) on top of the global grade');
+      });
+    },
+
+    stabilize() {
+      const clips = targetClips(); if (!clips.length) return toast('Import a video first');
+      return runTask('Stabilizing: measuring camera shake…', async (signal, progress) => {
+        const res = [];
+        for (let k = 0; k < clips.length; k++) {
+          const c = clips[k], a = assetById(c.assetId);
+          const r = await Analysis.estimateShake(a.url, c.in, c.out, { signal, onProgress: (p) => progress((k + p) / clips.length, `Measuring shake — ${a.name} (${k + 1}/${clips.length})… ${Math.round(p * 100)}%`) });
+          res.push([c, r]);
+        }
+        pushHistory();
+        res.forEach(([c, r]) => (c.reframe = { scale: r.scale, keys: r.keys, kind: 'stab' }));
+        afterEdit();
+        const crop = Math.round((1 - 1 / Math.max(...res.map(([, r]) => r.scale))) * 100);
+        toast(`Stabilized ${res.length} clip${res.length > 1 ? 's' : ''} (up to ${crop}% crop) — Reset Framing undoes it`);
+        setStatus('Stabilize applied (replaces Smart Reframe on these clips)');
+      });
+    },
+
+    title(opts) {
+      return (opts ? Promise.resolve({ text: opts.text, style: opts.style || 'title', dur: opts.duration || 3, start: opts.start }) : dialog({
+        title: 'Add text', ok: 'Add at playhead',
+        fields: [
+          { k: 'text', label: 'Text', type: 'textarea', value: '' },
+          { k: 'style', label: 'Style', type: 'select', options: Object.entries(TEXT_STYLES), value: 'title' },
+          { k: 'dur', label: 'Duration (s)', type: 'number', step: 0.1, min: 0.5, value: 3 },
+        ],
+      })).then((v) => {
+        if (!v || !v.text.trim()) return;
+        if (!TEXT_STYLES[v.style]) v.style = 'title';
+        pushHistory();
+        const start = +(v.start != null ? clamp(+v.start, 0, Math.max(0, S.total)) : S.time).toFixed(3);
+        const t = { id: uid(), text: v.text.trim(), style: v.style, start, end: +(start + Math.max(0.5, v.dur || 3)).toFixed(3) };
+        S.texts.push(t); S.texts.sort((a, b) => a.start - b.start); S.selText = t.id;
+        ovKey = ''; renderTimeline();
+        setStatus(`${TEXT_STYLES[t.style]} added at ${fmt(start)} — double-click it on the text lane to edit`);
+      });
+    },
+
+    captions() { $('srtInput').value = ''; $('srtInput').click(); },
+
+    screen() { return openScreen(); },
+
+    async reel(opts) {
+      if (!S.clips.length) return toast('Import footage first');
+      if (S.busy || S.exporting) return toast('Wait for the current task to finish');
+      const v = opts || await dialog({
+        title: 'Make a Reel', ok: 'Make it',
+        note: 'Vertical 9:16 with the subject kept in frame, dead air removed, trimmed to the strongest moments and leveled — ready for Reels, TikTok and Shorts. Every step is undoable.',
+        fields: [
+          { k: 'len', label: 'Length', type: 'select', options: [['keep', 'Keep everything'], ['15', '15 s'], ['30', '30 s'], ['60', '60 s'], ['90', '90 s']], value: '30' },
+          { k: 'silence', label: 'Dead air', type: 'select', options: [['cut', 'Cut silences and dead frames'], ['keep', 'Keep']], value: 'cut' },
+          { k: 'audio', label: 'Audio', type: 'select', options: [['level', 'Level loudness'], ['voice', 'Level + voice enhance'], ['keep', 'Leave as is']], value: 'level' },
+        ],
+      });
+      if (!v) return;
+      const steps = [], hasVideo = () => S.clips.some((c) => assetById(c.assetId).kind === 'video');
+      const step = async (label, fn) => { S.selected = null; const mark = toastLog.length; await fn(); while (S.busy) await new Promise((r) => setTimeout(r, 100)); steps.push(`${label}: ${(toastLog.slice(mark).pop() || {}).msg || 'done'}`); };
+      if (v.silence === 'cut' && hasVideo()) {
+        await step('Silence', () => tools.silence());
+        await step('Dead frames', () => tools.deadframes());
+        await step('Cut', () => tools.applysilence());
+      }
+      const target = +v.len;
+      if (target && S.total > target + 0.5 && hasVideo()) await step('Highlights', () => tools.highlight(String(target)));
+      $('aspect').value = '9:16'; S.aspect = '9:16'; updateCanvasSize(); S.dirty = true;
+      if (hasVideo()) await step('Reframe', () => tools.reframe());
+      if (v.audio !== 'keep' && hasVideo()) {
+        await step('Loudness', () => tools.loudness());
+        if (v.audio === 'voice' && !S.clips.every((c) => c.enhance)) await step('Voice', () => tools.voice());
+      }
+      seek(0); fitZoom();
+      toast(`Reel ready: ${fmt(S.total)} at 9:16 — preview, add text, then Export`);
+      setStatus('Make a Reel: ' + steps.map((x) => x.split(':')[0]).join(' → '));
+      return steps;
+    },
+    studio() { openStudio(); },
+
+    autozoom() {
+      const clips = targetClips(); if (!clips.length) return toast('Import or record a screen capture first');
+      return runTask('Auto Zoom: finding activity…', async (signal, progress) => {
+        const res = [];
+        for (let k = 0; k < clips.length; k++) {
+          const c = clips[k], a = assetById(c.assetId);
+          const r = await Analysis.detectFocus(a.url, c.in, c.out, { signal, onProgress: (p) => progress((k + p) / clips.length, `Watching ${a.name} for activity… ${Math.round(p * 100)}%`) });
+          res.push([c, r]);
+        }
+        pushHistory();
+        res.forEach(([c, r]) => (c.reframe = { scale: 1, keys: r.keys, kind: 'zoom' }));
+        afterEdit();
+        const n = res.reduce((s, [, r]) => s + r.zooms, 0);
+        toast(n ? `Auto Zoom: ${n} push-in${n > 1 ? 's' : ''} on typing, clicks and scrolling — Reset Framing removes them` : 'No localised activity found — nothing to zoom into');
+        setStatus('Auto Zoom applied (replaces other framing on these clips)');
+      });
+    },
+
+    thumbnail() {
+      if (!S.clips.length) return toast('Import footage first');
+      if (!R) return toast('WebGL is required to render the thumbnail', true);
+      return runTask('Finding the best thumbnail frame…', async (signal, progress) => {
+        const N = clamp(Math.round(S.total * 2), 12, 48), cands = [];
+        for (let i = 0; i < N; i++) { const t = (i + 0.5) * S.total / N, l = locate(t); if (l) cands.push({ t, a: l.asset, src: l.src, score: 0 }); }
+        const byAsset = new Map();
+        cands.forEach((c) => { if (!byAsset.has(c.a)) byAsset.set(c.a, []); byAsset.get(c.a).push(c); });
+        let done = 0;
+        for (const [a, list] of byAsset) {
+          if (a.kind === 'image') {
+            const cv = document.createElement('canvas'); cv.width = 160; cv.height = 90;
+            const g = cv.getContext('2d', { willReadFrequently: true }); g.drawImage(a.el, 0, 0, 160, 90);
+            const sc = Analysis.thumbScore(g.getImageData(0, 0, 160, 90)).score;
+            list.forEach((c) => (c.score = sc)); done += list.length; continue;
+          }
+          await Analysis.sampleFrames(a.url, list.map((c) => c.src), (img, t, i) => {
+            list[i].score = Analysis.thumbScore(img).score; done++;
+            progress(done / cands.length, `Scoring frame ${done}/${cands.length}`);
+          }, { w: 160, h: 90, signal });
+        }
+        for (const c of cands) {
+          if (c.a.sceneCuts.some((x) => Math.abs(x - c.src) < 0.35)) c.score *= 0.7;
+          if ((c.a.dead || []).some((z) => c.src >= z.start && c.src <= z.end)) c.score *= 0.3;
+        }
+        const best = cands.reduce((b, c) => (!b || c.score > b.score ? c : b), null);
+        if (!best) throw new Error('No frames to score');
+        seek(best.t); await frameReady();
+        const l = locate(S.time); updateOverlay(true);
+        R.upload(l.asset.el); R.draw(colorParams(l), framingFor(l), false);
+        const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'));
+        if (!blob) throw new Error('Capture failed');
+        download(blob, `kutlabz-thumbnail-${fmt(best.t).replace(/[:.]/g, '-')}.png`);
+        toast(`Best frame at ${fmt(best.t)} saved as a ${canvas.width}×${canvas.height} PNG`);
+        setStatus(`Thumbnail: sharpest, best-exposed frame at ${fmt(best.t)}`);
+      });
+    },
+
+    async chapters() {
+      if (!S.clips.length) return toast('Import footage first');
+      const pts = new Set([0]), hasCuts = S.assets.some((a) => a.sceneCuts.length);
+      S.clips.forEach((c, i) => {
+        const a = assetById(c.assetId);
+        if (hasCuts) a.sceneCuts.forEach((t) => { if (t > c.in && t < c.out) pts.add(S.starts[i] + t - c.in); });
+        else if (i) pts.add(S.starts[i]);
+      });
+      S.texts.filter((t) => t.style === 'title').forEach((t) => pts.add(t.start));
+      const keep = [];
+      for (const t of [...pts].sort((x, y) => x - y)) if (!keep.length || (t - keep[keep.length - 1] >= 10 && S.total - t >= 10)) keep.push(t);
+      if (keep.length < 3) return toast('YouTube needs at least 3 chapters, 10 s apart — run Detect Scene Cuts or split the edit first');
+      const p2 = (n) => String(n).padStart(2, '0');
+      const ts = (t) => { t = Math.floor(t); const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60; return h ? `${h}:${p2(m)}:${p2(s)}` : `${m}:${p2(s)}`; };
+      const lines = keep.map((t, i) => {
+        const next = keep[i + 1] ?? Infinity;
+        const tt = S.texts.find((x) => x.style === 'title' && x.start >= t - 0.01 && x.start < next);
+        return `${ts(t)} ${tt ? tt.text.split('\n')[0] : i === 0 ? 'Intro' : `Chapter ${i + 1}`}`;
+      });
+      const v = await dialog({
+        title: 'Chapters', ok: 'Copy',
+        note: 'YouTube chapter list from scene cuts, clip boundaries and titles. Rename them here, then paste into the video description.',
+        fields: [{ k: 'text', label: `${keep.length} chapters`, type: 'textarea', rows: Math.min(12, keep.length + 1), value: lines.join('\n') }],
+      });
+      if (!v) return;
+      try { await navigator.clipboard.writeText(v.text); toast('Chapters copied to the clipboard'); }
+      catch (e) { download(new Blob([v.text], { type: 'text/plain' }), 'kutlabz-chapters.txt'); toast('Clipboard unavailable — chapters saved as a text file'); }
+    },
+  });
+
   document.querySelectorAll('.tool').forEach((b) => (b.onclick = () => tools[b.dataset.tool]()));
 
   $('refInput').addEventListener('change', async (e) => {
@@ -842,7 +1556,10 @@
     $('lutAmt').value = S.lutAmt; $('lutAmt').nextElementSibling.textContent = Math.round(S.lutAmt * 100) + '%';
   }
   $('lutAmt').addEventListener('input', (e) => { S.lutAmt = +e.target.value; e.target.nextElementSibling.textContent = Math.round(S.lutAmt * 100) + '%'; S.dirty = true; });
-  $('btnResetColor').onclick = () => { S.color = defaultColor(); S.lutAmt = 1; selectLut('none'); syncControls(); S.dirty = true; setStatus('Color reset'); };
+  $('btnResetColor').onclick = () => {
+    if (S.clips.some((c) => c.adj)) { pushHistory(); S.clips.forEach((c) => delete c.adj); renderTimeline(); }
+    S.color = defaultColor(); S.lutAmt = 1; selectLut('none'); syncControls(); S.dirty = true; setStatus('Color reset (global grade and per-shot matches)');
+  };
 
   let lutSwatchFromFrame = null, swatchBase = null;
   function swatchSource() {
@@ -920,12 +1637,71 @@
     $('camBar').hidden = false; $('empty').hidden = true; $('btnCamera').classList.add('active');
     updateCanvasSize(); setStatus('Camera live — grading is applied in real time');
   }
+  /* ---------------- Image Studio bridge ---------------- */
+  function openStudio() {
+    if (!window.ImageStudio) return toast('Image Studio failed to load', true);
+    pause();
+    const onSend = (file) => { importFiles([file]); };
+    const sel = S.clips.find((c) => c.id === S.selected), selAsset = sel && assetById(sel.assetId);
+    const base = (n) => n.replace(/\.[^.]+$/, '');
+    if (selAsset && selAsset.kind === 'image') return ImageStudio.open({ source: selAsset.el, name: base(selAsset.name), onSend });
+    const loc = locate(S.time);
+    if (!loc) return ImageStudio.open({ onSend });
+    const a = loc.asset;
+    if (a.kind === 'image') return ImageStudio.open({ source: a.el, name: base(a.name), onSend });
+    // the frame under the playhead, at the source resolution (ungraded: the studio has its own adjustments)
+    const c = document.createElement('canvas'); c.width = a.width; c.height = a.height;
+    try { c.getContext('2d').drawImage(a.el, 0, 0, a.width, a.height); } catch (e) { return toast('Frame not ready — try again', true); }
+    ImageStudio.open({ source: c, name: `${base(a.name)}-${fmt(S.time).replace(/[:.]/g, '-')}`, onSend });
+  }
+  $('btnStudio').onclick = openStudio;
+
+  async function openScreen() {
+    if (S.camera) closeCamera();
+    if (S.exporting) return;
+    if (!navigator.mediaDevices?.getDisplayMedia) return toast('Screen capture is not available in this browser', true);
+    const v = await dialog({
+      title: 'Record screen', ok: 'Choose screen…',
+      note: 'Pick a screen, window or tab. The preview appears here; press Record, switch to what you want to capture, and come back to stop. The recording lands on the timeline — try Auto Zoom and Detect Dead Frames on it.',
+      fields: [
+        { k: 'mic', label: 'Microphone', type: 'select', options: [['yes', 'Record narration'], ['no', 'No microphone']], value: 'yes' },
+        { k: 'sys', label: 'System / tab audio', type: 'select', options: [['yes', 'Include when shared'], ['no', 'Mute']], value: 'yes' },
+        { k: 'fps', label: 'Frame rate', type: 'select', options: [['30', '30 fps'], ['60', '60 fps']], value: '30' },
+      ],
+    });
+    if (!v) return;
+    pause();
+    let display;
+    try { display = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: +v.fps, width: { ideal: 2560 }, height: { ideal: 1440 } }, audio: v.sys === 'yes' }); }
+    catch (e) { return toast('Screen capture cancelled' + (e.name === 'NotAllowedError' ? '' : ': ' + e.message), e.name !== 'NotAllowedError'); }
+    let mic = null;
+    if (v.mic === 'yes') { try { mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); } catch (e) { toast('Microphone unavailable — recording screen audio only', true); } }
+    const audioIn = [...display.getAudioTracks(), ...(mic ? mic.getAudioTracks() : [])];
+    let recStream = new MediaStream(display.getVideoTracks());
+    let mixCtx = null;
+    if (audioIn.length) {
+      mixCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const dest = mixCtx.createMediaStreamDestination();
+      for (const tr of audioIn) mixCtx.createMediaStreamSource(new MediaStream([tr])).connect(dest);
+      recStream = new MediaStream([...display.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+    }
+    const el = document.createElement('video'); el.muted = true; el.playsInline = true; el.srcObject = display;
+    await el.play().catch(() => {});
+    if (!el.videoWidth) await new Promise((r) => el.addEventListener('loadedmetadata', r, { once: true }));
+    S.camera = { stream: display, el, rec: null, kind: 'screen', recStream, extra: mic, mixCtx };
+    display.getVideoTracks()[0].addEventListener('ended', () => { if (S.camera && S.camera.el === el) { if (S.camera.rec && S.camera.rec.state === 'recording') S.camera.rec.stop(); else closeCamera(); } });
+    $('camBar').hidden = false; $('empty').hidden = true; $('btnScreen').classList.add('active');
+    updateCanvasSize(); setStatus('Screen preview — press Record (Space) to start, Stop or end sharing to finish');
+  }
+
   function closeCamera() {
     if (!S.camera) return;
     if (S.camera.rec && S.camera.rec.state !== 'inactive') S.camera.rec.stop();
     S.camera.stream.getTracks().forEach((t) => t.stop());
+    if (S.camera.extra) S.camera.extra.getTracks().forEach((t) => t.stop());
+    if (S.camera.mixCtx) S.camera.mixCtx.close().catch(() => {});
     S.camera = null;
-    $('camBar').hidden = true; $('btnCamera').classList.remove('active'); $('camRec').hidden = true;
+    $('camBar').hidden = true; $('btnCamera').classList.remove('active'); $('btnScreen').classList.remove('active'); $('camRec').hidden = true;
     $('btnCamRecord').textContent = '● Record';
     afterEdit(); setStatus('Ready');
   }
@@ -935,7 +1711,8 @@
     if (cam.rec && cam.rec.state === 'recording') { cam.rec.stop(); return; }
     if (!window.MediaRecorder) return toast('Recording is not supported in this browser', true);
     const mime = pickMime(['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4']);
-    const rec = new MediaRecorder(cam.stream, mime ? { mimeType: mime } : undefined);
+    const rec = new MediaRecorder(cam.recStream || cam.stream, mime ? { mimeType: mime } : undefined);
+    const isScreen = cam.kind === 'screen';
     const chunks = []; const t0 = performance.now();
     rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
     rec.onstop = () => {
@@ -944,16 +1721,17 @@
       const blob = new Blob(chunks, { type });
       const dur = (performance.now() - t0) / 1000;
       const ext = type.includes('mp4') ? 'mp4' : 'webm';
-      const file = new File([blob], `camera-${new Date().toISOString().slice(11, 19).replace(/:/g, '')}.${ext}`, { type });
+      const file = new File([blob], `${isScreen ? 'screen' : 'camera'}-${new Date().toISOString().slice(11, 19).replace(/:/g, '')}.${ext}`, { type });
       $('camRec').hidden = true; $('btnCamRecord').textContent = '● Record';
       closeCamera();
-      importFiles([file], { durationHint: dur });
+      importFiles([file], { durationHint: dur, screen: isScreen });
     };
     rec.start(500); cam.rec = rec;
     $('camRec').hidden = false; $('btnCamRecord').textContent = '■ Stop';
     cam.timer = setInterval(() => { $('camTime').textContent = fmt((performance.now() - t0) / 1000).replace(/\.\d$/, ''); }, 250);
   }
   $('btnCamera').onclick = openCamera;
+  $('btnScreen').onclick = openScreen;
   $('btnCamClose').onclick = closeCamera;
   $('btnCamRecord').onclick = toggleCamRecord;
 
@@ -961,7 +1739,7 @@
   function framePng() {
     if (!R || (!S.clips.length && !S.camera)) return toast('Nothing to capture yet');
     const loc = locate(S.time);
-    if (loc && !S.camera) { R.upload(loc.asset.el); R.draw(colorParams(), framingFor(loc), S.raw); }
+    if (loc && !S.camera) { updateOverlay(true); R.upload(loc.asset.el); R.draw(colorParams(loc), framingFor(loc), S.raw); }
     canvas.toBlob((b) => { if (!b) return toast('Capture failed', true); download(b, `kutlabz-frame-${fmt(S.time).replace(/[:.]/g, '-')}.png`); toast(`Saved ${canvas.width}×${canvas.height} PNG`); }, 'image/png');
   }
   $('btnFrame').onclick = framePng;
@@ -975,7 +1753,8 @@
     ensureAudio();
     pause(); seek(0);
     await new Promise((r) => setTimeout(r, 350));
-    const mime = pickMime(['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']);
+    const mime = pickMime(['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']);
+    const isMp4 = mime.startsWith('video/mp4');
     const tracks = [...canvas.captureStream(30).getVideoTracks()];
     if (S.recDest) tracks.push(...S.recDest.stream.getAudioTracks());
     const stream = new MediaStream(tracks);
@@ -987,12 +1766,13 @@
     rec.onstop = () => {
       const ex = S.exporting; S.exporting = null;
       tracks.forEach((t) => t.kind === 'video' && t.stop());
-      $('busy').hidden = true; $('btnExport').textContent = '⬇ Export WebM';
+      $('busy').hidden = true; $('btnExport').textContent = 'Export Video';
       if (!ex || ex.cancelled) { setStatus('Export cancelled'); return; }
-      const blob = new Blob(chunks, { type: 'video/webm' });
-      download(blob, `kutlabz-export-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.webm`);
-      setStatus(`Exported ${fmt(S.total)} · ${(blob.size / 1048576).toFixed(1)} MB`);
-      toast('Export complete — WebM downloaded');
+      const type = isMp4 ? 'video/mp4' : 'video/webm', ext = isMp4 ? 'mp4' : 'webm';
+      const blob = new Blob(chunks, { type });
+      const name = `kutlabz-${S.aspect === '9:16' ? 'reel' : 'export'}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.${ext}`;
+      setStatus(`Exported ${fmt(S.total)} · ${(blob.size / 1048576).toFixed(1)} MB ${ext.toUpperCase()}`);
+      deliverExport(blob, name, ext);
     };
     $('busy').hidden = false; $('busy').classList.add('light');
     $('busyCancel').hidden = false; $('busyCancel').onclick = cancelExport;
@@ -1000,6 +1780,23 @@
     toast('Exporting in real time — keep this tab visible');
     rec.start(1000);
     play();
+  }
+  /* phones: hand the file to the share sheet (Instagram, TikTok, YouTube, Photos…); otherwise download */
+  async function deliverExport(blob, name, ext) {
+    const file = new File([blob], name, { type: blob.type });
+    const canShare = navigator.canShare && navigator.share && (() => { try { return navigator.canShare({ files: [file] }); } catch (e) { return false; } })();
+    if (canShare && document.body.classList.contains('mobile')) {
+      const v = await dialog({
+        title: 'Your video is ready', ok: 'Share…',
+        note: `${ext.toUpperCase()} · ${(blob.size / 1048576).toFixed(1)} MB · ${canvas.width}×${canvas.height}. Share opens your phone's share sheet: post to Instagram, TikTok or YouTube, or save to Photos.${ext === 'webm' ? ' This browser records WebM; some apps need MP4.' : ''}`,
+      });
+      if (v) {
+        try { await navigator.share({ files: [file], title: 'KutLabz edit' }); toast('Shared'); return; }
+        catch (e) { if (e.name === 'AbortError') { toast('Share cancelled — use Export again to retry, or the file is saved below'); } }
+      }
+    }
+    download(blob, name);
+    toast(`Export complete — ${ext.toUpperCase()} downloaded`);
   }
   function finishExport() { const ex = S.exporting; if (ex && ex.rec.state !== 'inactive') setTimeout(() => ex.rec.state !== 'inactive' && ex.rec.stop(), 150); }
   function cancelExport() { const ex = S.exporting; if (!ex) return; ex.cancelled = true; pause(); if (ex.rec.state !== 'inactive') ex.rec.stop(); }
@@ -1010,7 +1807,7 @@
   $('btnStart').onclick = () => { if (!S.exporting) seek(0); };
   $('btnEnd').onclick = () => { if (!S.exporting) { pause(); seek(S.total); } };
   function setMuted(m) {
-    S.muted = m; $('btnMute').textContent = m ? '🔇' : '🔊';
+    S.muted = m; $('btnMute').textContent = m ? 'MUTE' : 'VOL'; $('btnMute').classList.toggle('active', m);
     if (S.monitor) S.monitor.gain.value = m ? 0 : 1;
     else S.assets.forEach((a) => a.kind === 'video' && (a.el.muted = m));
   }
@@ -1024,10 +1821,13 @@
 
   /* ---------------- keyboard ---------------- */
   window.addEventListener('keydown', (e) => {
+    if (dlgOpen) { if (e.key === 'Escape' && dlgClose) dlgClose(); return; }
+    if (window.ImageStudio && ImageStudio.isOpen()) return;
+    if (e.target.closest && e.target.closest('#chatPanel')) return; // typing to the assistant
     const tag = e.target.tagName;
     const typing = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA';
     if (e.key === 'Escape') {
-      if (S.exporting) cancelExport(); else if (S.busy) S.busy.abort(); else if (S.camera) closeCamera(); else { S.selected = null; renderTimeline(); }
+      if (S.exporting) cancelExport(); else if (S.busy) S.busy.abort(); else if (S.camera) closeCamera(); else { S.selected = null; S.selText = null; renderTimeline(); }
       return;
     }
     if (S.exporting) return;
@@ -1079,6 +1879,81 @@
   afterEdit();
   requestAnimationFrame(loop);
 
-  // tiny debug/test hook
-  window.KutLabz = { state: S, importFiles, seek, play, pause, splitAt: (t) => { pushHistory(); splitAt(t); afterEdit(); }, tools, undo, redo };
+  /* ---------------- programmatic API (assistant + tests) ---------------- */
+  const r3 = (x) => Math.round(x * 1000) / 1000;
+  const api = {
+    state: S, tools, importFiles, seek, play, pause, undo, redo, toastLog, openStudio,
+    splitAt: (t) => { pushHistory(); const ok = splitAt(t); if (!ok) S.history.pop(); afterEdit(); return ok; },
+    summary() {
+      return {
+        duration: r3(S.total), playhead: r3(S.time), aspect: S.aspect, canvas: `${canvas.width}x${canvas.height}`,
+        clips: S.clips.map((c, i) => {
+          const a = assetById(c.assetId);
+          return {
+            index: i, name: a.name, kind: a.screen ? 'screen' : a.kind, start: r3(S.starts[i]), duration: r3(clipDur(c)), source_in: r3(c.in), source_out: r3(c.out),
+            framing: c.reframe ? (c.reframe.kind || 'reframe') : null, gain_db: c.gain ? r3(20 * Math.log10(c.gain)) : 0, voice_enhance: !!c.enhance, shot_match: !!c.adj,
+            scene_cuts: a.sceneCuts.filter((t) => t > c.in && t < c.out).length, silences: a.silences.length, dead_zones: (a.dead || []).length,
+          };
+        }),
+        texts: S.texts.map((t, i) => ({ index: i, style: t.style, text: t.text, start: t.start, end: t.end })),
+        music: S.music ? { name: S.music.name, bpm: S.music.bpm, duration: r3(S.music.duration), auto_duck: S.music.duck } : null,
+        grade: { ...S.color, look: (S.lutList.find((l) => l.id === S.lutId) || {}).name, look_intensity: S.lutAmt },
+        looks_available: S.lutList.map((l) => l.name),
+      };
+    },
+    setColor(vals, mode = 'set') {
+      const changed = [];
+      for (const d of COLOR_DEFS) {
+        if (typeof vals[d.k] !== 'number' || !isFinite(vals[d.k])) continue;
+        const v = mode === 'adjust' ? (d.def === 1 ? S.color[d.k] * (1 + vals[d.k]) : S.color[d.k] + vals[d.k]) : vals[d.k];
+        S.color[d.k] = r3(clamp(v, d.min, d.max)); changed.push(`${d.k} ${S.color[d.k]}`);
+      }
+      syncControls(); S.dirty = true;
+      return changed.length ? `Grade: ${changed.join(', ')}` : 'No valid grade values given';
+    },
+    setLook(name, intensity) {
+      const q = String(name || '').toLowerCase().trim();
+      const L = S.lutList.find((l) => l.name.toLowerCase() === q) || S.lutList.find((l) => l.name.toLowerCase().includes(q) || q.includes(l.name.toLowerCase()));
+      if (!L) return `Unknown look "${name}". Available: ${S.lutList.map((l) => l.name).join(', ')}`;
+      selectLut(L.id);
+      if (typeof intensity === 'number') { S.lutAmt = clamp(intensity, 0, 1); syncControls(); }
+      return `Look: ${L.name} at ${Math.round(S.lutAmt * 100)}%`;
+    },
+    setAspect(a) {
+      const opts = ['source', '16:9', '9:16', '1:1', '4:5'];
+      if (!opts.includes(a)) return `Aspect must be one of ${opts.join(', ')}`;
+      $('aspect').value = a; S.aspect = a; updateCanvasSize(); S.dirty = true; return `Output aspect ${a} (${canvas.width}×${canvas.height})`;
+    },
+    editClip({ action, clip_index, time, in: tin, out: tout, to_index }) {
+      const c = S.clips[clip_index];
+      if (action === 'split') { if (typeof time !== 'number') return 'split needs time'; return api.splitAt(time) ? `Split at ${fmt(time)}` : 'No clip long enough at that time'; }
+      if (!c) return `No clip at index ${clip_index} (there are ${S.clips.length})`;
+      const a = assetById(c.assetId);
+      pushHistory();
+      if (action === 'delete') { S.clips.splice(clip_index, 1); if (S.selected === c.id) S.selected = null; afterEdit(); return `Deleted clip ${clip_index}`; }
+      if (action === 'trim') {
+        const maxOut = a.kind === 'image' ? 600 : a.duration;
+        const ni = typeof tin === 'number' ? clamp(tin, 0, maxOut) : c.in, no = typeof tout === 'number' ? clamp(tout, 0, maxOut) : c.out;
+        if (no - ni < MIN_CLIP) { S.history.pop(); return 'Trim would leave less than 0.1 s'; }
+        c.in = r3(ni); c.out = r3(no); afterEdit(); return `Clip ${clip_index} now ${fmt(c.in)}–${fmt(c.out)} of the source`;
+      }
+      if (action === 'move') {
+        const to = clamp(to_index | 0, 0, S.clips.length - 1);
+        S.clips.splice(clip_index, 1); S.clips.splice(to, 0, c); afterEdit(); return `Moved clip ${clip_index} to position ${to}`;
+      }
+      S.history.pop(); return `Unknown action ${action}`;
+    },
+    deleteText(i) { if (!S.texts[i]) return `No text at index ${i}`; pushHistory(); const [t] = S.texts.splice(i, 1); ovKey = ''; renderTimeline(); return `Removed text "${t.text}"`; },
+    async runTool(name, clipIndex) {
+      if (!tools[name]) return `Unknown tool ${name}`;
+      const mark = toastLog.length;
+      S.selected = clipIndex != null && S.clips[clipIndex] ? S.clips[clipIndex].id : null;
+      renderTimeline();
+      await tools[name]();
+      while (S.busy) await new Promise((r) => setTimeout(r, 100));
+      const msgs = toastLog.slice(mark).map((m) => (m.err ? 'Error: ' : '') + m.msg);
+      return msgs.join(' | ') || 'Done';
+    },
+  };
+  window.KutLabz = api;
 })();
