@@ -1831,6 +1831,8 @@
       return;
     }
     if (S.exporting) return;
+    // typing in any text field (prompt bar, recipe editor, dialogs) never triggers editor shortcuts
+    if (typing && !['range', 'checkbox', 'radio', 'button', 'submit'].includes(e.target.type)) return;
     const mod = e.ctrlKey || e.metaKey;
     if (e.code === 'Space') { e.preventDefault(); if (typing) e.target.blur(); if (S.camera) toggleCamRecord(); else togglePlay(); return; }
     if (typing && e.target.type !== 'range') return;

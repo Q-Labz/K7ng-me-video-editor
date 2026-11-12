@@ -83,6 +83,12 @@ Nothing is uploaded: every tool analyses downscaled frames or decoded PCM in the
 | **AI enhance** | **Auto Enhance** (levels from luminance percentiles, partial grey-world white balance, vibrance, light denoise and sharpening) · **Upscale 2×** (high-quality resample + detail sharpening) · **Remove Background** (flood from the borders through the dominant backdrop colours, feathered edge; for studio, product and flat backgrounds) · **Denoise** (edge-preserving). |
 | **Output** | PNG or JPG download, or **Add to timeline**. Undo/redo covers the last 20 steps. |
 
+### Prompt bar and recipes
+
+- **Prompt bar:** always visible above the preview, pinned at the top on phones. Press **Ctrl+K** (**⌘K** on Mac), type an edit and press Enter. The outcome shows over the preview; **Details** opens the full step list in the Assistant. **↑ / ↓** recall earlier prompts.
+- **Prompt Recipes:** the **Recipes** button, **Content → Prompt Recipes…**, or **Create → Prompt Recipes** on phones. A recipe is a named list of prompts that runs in order on the current edit, and can be stopped between steps. Recipes save as you type, and you can add steps from your prompt history, reorder, duplicate or delete them. A step the engine doesn't understand stops the run and says why. Five starters are included (Podcast / talking-head clip, Product teaser · 15 s, Cinematic grade, Screen tutorial, Music montage); **Restore starters** brings back any you delete.
+- **Engine:** both run through the Assistant engine — offline commands by default, or Claude when connected (then steps can be free-form). Recipes and prompt history are kept in this browser's storage.
+
 ### Assistant
 
 - **Local (default, offline):** understands requests like “cut the silences and level the audio”, “make a 30 second highlight reel”, “vertical for TikTok”, “warmer and a bit brighter”, “use the teal look”, “add title "Launch Day"”, “stabilize”, “auto zoom”, “undo”. Each action is listed as it runs.
@@ -92,7 +98,7 @@ AI tools act on the selected clip, or on every clip when none is selected.
 
 ## Keyboard
 
-`Space` play/pause · `←/→` seek 1 s (`Shift` 5 s) · `,` / `.` frame step · `Home` / `End` · `S` split · `Shift+S` split at cuts · `Del` delete · `M` mute · `\` hold raw · `+` / `-` zoom · `Esc` cancel/deselect
+`Ctrl/⌘+K` prompt bar · `Space` play/pause · `←/→` seek 1 s (`Shift` 5 s) · `,` / `.` frame step · `Home` / `End` · `S` split · `Shift+S` split at cuts · `Del` delete · `M` mute · `\` hold raw · `+` / `-` zoom · `Esc` cancel/deselect
 
 ## Notes and limits
 
