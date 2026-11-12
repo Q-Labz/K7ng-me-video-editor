@@ -39,7 +39,7 @@
       <input id="srtInput" type="file" accept=".srt,.vtt,text/vtt" hidden>
     </div>
   </header>
-  <div class="hint">Space play · ←/→ seek 1s (Shift: 5s) · S split (Shift+S at cuts) · Del remove clip · Ctrl+Z undo · drag clips to reorder · drag edges to trim · drop files anywhere</div>
+  <div class="hint">Ctrl+K prompt · Space play · ←/→ seek 1s (Shift: 5s) · S split (Shift+S at cuts) · Del remove clip · Ctrl+Z undo · drag clips to reorder · drag edges to trim · drop files anywhere</div>
 
   <main class="workspace">
     <aside class="panel left">
@@ -206,6 +206,7 @@
 <script src="js/studio.js"></script>
 <script src="js/chat.js"></script>
 <script src="js/mobile.js"></script>
+<script src="js/prompts.js"></script>
 <script>if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});</script>
 </body>
 </html>

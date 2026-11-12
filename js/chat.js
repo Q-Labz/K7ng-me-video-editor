@@ -21,7 +21,9 @@
   let busy = false, sessionKey = null;
   const history = []; // Claude conversation (append-only, assistant content passed back unchanged)
 
+  let lastReply = null, actionCount = 0; // reported back to callers such as the prompt bar
   function bubble(role, text, cls = '') {
+    if (role === 'assistant' && !/pending/.test(cls)) lastReply = { text, error: /err/.test(cls) };
     const el = document.createElement('div');
     el.className = `msg ${role} ${cls}`.trim();
     el.textContent = text;
@@ -29,6 +31,7 @@
     return el;
   }
   function actionChip(name, detail) {
+    actionCount++;
     const el = document.createElement('div'); el.className = 'msg act';
     const b = document.createElement('b'); b.textContent = '▸ ' + name; el.appendChild(b);
     if (detail) { const s = document.createElement('span'); s.textContent = detail; el.appendChild(s); }
@@ -120,7 +123,7 @@
   }
   async function runLocal(text) {
     const acts = parseLocal(text);
-    if (!acts.length) { bubble('assistant', `I didn't catch an edit there. ${LOCAL_HELP}`); return; }
+    if (!acts.length) { bubble('assistant', `I didn't catch an edit there. ${LOCAL_HELP}`, 'err'); return; }
     for (const a of acts) {
       const chip = actionChip(a.label);
       try { const res = await execute(a.name, a.input); chip.appendChild(Object.assign(document.createElement('span'), { textContent: res })); }
@@ -211,16 +214,20 @@ Work style: check get_timeline when you need indices, durations or what is alrea
   }
 
   /* ---------------- wiring ---------------- */
-  async function send(textArg) {
+  /** Run one prompt. Returns { reply, error, actions } so other surfaces (prompt bar, recipes) can show the outcome. */
+  async function send(textArg, opts = {}) {
     const text = (textArg ?? $('chatInput').value).trim();
-    if (!text || busy) return;
-    $('chatInput').value = '';
+    if (!text) return { reply: '', error: true, actions: 0 };
+    if (busy) return { reply: 'The assistant is still working on the previous prompt.', error: true, actions: 0, busy: true };
+    if (textArg == null) $('chatInput').value = '';
+    lastReply = null; actionCount = 0;
     bubble('user', text);
     setBusy(true);
     try {
-      if (!K().state.clips.length && !/title|caption|text|undo/i.test(text)) { bubble('assistant', 'Import some footage first — then tell me what to do with it.'); return; }
-      if (getKey()) await runClaude(text); else await runLocal(text);
-    } finally { setBusy(false); $('chatInput').focus(); }
+      if (!K().state.clips.length && !/title|caption|text|undo/i.test(text)) bubble('assistant', 'Import some footage first — then tell me what to do with it.', 'err');
+      else if (getKey()) await runClaude(text); else await runLocal(text);
+    } finally { setBusy(false); if (!opts.quiet) $('chatInput').focus(); }
+    return { reply: lastReply ? lastReply.text : '', error: !!(lastReply && lastReply.error), actions: actionCount };
   }
   async function connect() {
     if (getKey()) { sessionKey = null; try { localStorage.removeItem(KEY_STORE); } catch (e) { /* storage blocked */ } history.length = 0; clientPromise = null; renderMode(); bubble('assistant', 'Disconnected — back to local commands.'); return; }
@@ -248,6 +255,6 @@ Work style: check get_timeline when you need indices, durations or what is alrea
     renderMode();
     bubble('assistant', `I edit while you describe. ${LOCAL_HELP}`);
   }
-  window.KutChat = { send, parseLocal, execute, TOOLS, _history: history };
+  window.KutChat = { send, parseLocal, execute, TOOLS, isBusy: () => busy, engine: () => (getKey() ? 'claude' : 'local'), _history: history };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
