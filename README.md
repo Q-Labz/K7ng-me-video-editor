@@ -95,7 +95,7 @@ Nothing is uploaded: every tool analyses downscaled frames or decoded PCM in the
 
 ### Assistant
 
-- **Local (default, offline):** understands requests like “cut the silences and level the audio”, “make a 30 second highlight reel”, “vertical for TikTok”, “warmer and a bit brighter”, “use the teal look”, “add title "Launch Day"”, “stabilize”, “auto zoom”, “undo”. Each action is listed as it runs.
+- **Local (default, offline):** understands requests like “cut the silences and level the audio”, “make a 30 second highlight reel”, “vertical for TikTok”, “warmer and a bit brighter”, “use the teal look”, “add title "Launch Day"”, “replace the subtitle with Quarterly Bonus”, “remove the text under the logo”, “stabilize”, “auto zoom”, “undo”. Each action is listed as it runs.
 - **Claude (opt-in):** **Connect Claude** and paste an Anthropic API key. The assistant uses Claude Opus 5.5 (`claude-opus-5-5`) through the official `@anthropic-ai/sdk`, loaded from jsDelivr. Claude gets tools for reading the timeline, running every AI tool, grading, looks, aspect, text and cut-level edits, and plans multi-step edits itself. Server-side refusal fallbacks are on. **What is sent:** your messages and a text summary of the timeline (clip names, times, settings), straight from your browser to `api.anthropic.com`. Media never leaves the machine. The key is kept for the session only, or in this browser's storage if you tick *Remember*; usage is billed to your key.
 
 AI tools act on the selected clip, or on every clip when none is selected.
