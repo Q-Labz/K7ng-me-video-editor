@@ -1,5 +1,5 @@
 /* KutLabz service worker: installable app + offline shell. Media never touches the cache. */
-const CACHE = 'kutlabz-v4';
+const CACHE = 'kutlabz-v5';
 const SHELL = ['./', 'index.html', 'css/style.css', 'js/luts.js', 'js/gl.js', 'js/analysis.js', 'js/app.js', 'js/studio.js', 'js/chat.js', 'js/mobile.js', 'js/prompts.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon.svg'];
 const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
 
