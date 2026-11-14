@@ -70,6 +70,10 @@
         return t ? `Added ${t.style} "${t.text}" at ${t.start}s–${t.end}s` : 'Text not added';
       }
       case 'remove_text': return api.deleteText(input.text_index);
+      case 'replace_text': {
+        const t = await api.tools.replace({ text: typeof input.text === 'string' ? input.text : undefined });
+        return !t ? 'No box drawn — nothing changed' : t.text ? `Replaced the text in the video with "${t.text}" (${t.start}s–${t.end}s)` : `Removed the text from the video (${t.start}s–${t.end}s)`;
+      }
       case 'edit_clip': return api.editClip(input);
       case 'seek': api.seek(+input.time || 0); return `Playhead at ${api.state.time.toFixed(2)}s`;
       case 'undo': { const n = Math.max(1, Math.min(10, input.steps | 0 || 1)); for (let i = 0; i < n; i++) api.undo(); return `Undid ${n} step${n > 1 ? 's' : ''}`; }
@@ -78,12 +82,24 @@
   }
 
   /* ---------------- engine 1: local command parser ---------------- */
-  const LOCAL_HELP = 'Try: “cut the silences”, “level the audio”, “make a 30 second highlight reel”, “stabilize”, “vertical for TikTok”, “warmer and brighter”, “use the teal look”, “add title Launch Day”, “auto zoom”, “detect scenes”, “undo”. Connect Claude for free-form requests.';
+  const LOCAL_HELP = 'Try: “cut the silences”, “level the audio”, “make a 30 second highlight reel”, “stabilize”, “vertical for TikTok”, “warmer and brighter”, “use the teal look”, “add title Launch Day”, “replace the subtitle with Quarterly Bonus”, “auto zoom”, “detect scenes”, “undo”. Connect Claude for free-form requests.';
   function parseLocal(text) {
     const acts = []; let t = text.toLowerCase();
     const push = (name, input, label) => acts.push({ name, input: input || {}, label });
     const quoted = text.match(/["“'‘](.+?)["”'’]/);
     if (/\bundo\b/.test(t)) push('undo', { steps: +(t.match(/undo (\d+)/) || [])[1] || 1 }, 'Undo');
+    // words burned into the footage: "replace the subtitle with …", "change the text under the logo to …", "remove the tagline"
+    const TXT = /\b(sub ?titles?|text|words?|wording|titles?|tagline|heading|headline|caption|line|writing|lettering|name)\b/;
+    if (/\b(replace|change|swap|switch|edit|rewrite|reword|update|fix)\b/.test(t) && TXT.test(t)) {
+      const m = quoted && /\b(with|to|into|say|read)\b/i.test(text.slice(0, text.indexOf(quoted[0]))) ? quoted[1]
+        : (text.match(/\b(?:with|to say|to read|so it says|so it reads|into|to)\s*:?\s+["“'‘]?(.+?)["”'’]?\s*$/i) || [])[1];
+      push('replace_text', m ? { text: m.trim() } : {}, 'Replace text in video');
+      return acts;
+    }
+    if (/\b(remove|erase|delete|get rid of|hide|clear|wipe)\b/.test(t) && TXT.test(t) && !/silen|frames?|clip|music/.test(t)) {
+      push('replace_text', { text: '' }, 'Remove text from video');
+      return acts;
+    }
     if (/(title|caption|lower third|text)\b/.test(t) && /(add|put|write|insert|title)/.test(t)) {
       const style = /caption/.test(t) ? 'caption' : /lower/.test(t) ? 'lower' : 'title';
       const body = quoted ? quoted[1] : text.replace(/^.*?\b(?:add|put|insert|write)\b\s*(?:an?|the)?\s*(?:title|caption|lower third|text)\s*(?:that says|saying|reading|:)?\s*/i, '').replace(/\s+(?:at|from)\s+\d.*$/i, '').trim();
@@ -143,6 +159,7 @@
     { name: 'set_aspect', description: 'Set the output aspect ratio. Follow with run_ai_tool reframe to keep the subject in frame.', input_schema: { type: 'object', properties: { aspect: { type: 'string', enum: ['source', '16:9', '9:16', '1:1', '4:5'] } }, required: ['aspect'], additionalProperties: false } },
     { name: 'add_text', description: 'Add a title (centred), lower third (name/role bar) or caption (bottom) on the timeline. Times are timeline seconds.', input_schema: { type: 'object', properties: { text: { type: 'string' }, style: { type: 'string', enum: ['title', 'lower', 'caption'] }, start: { type: 'number' }, duration: { type: 'number' } }, required: ['text', 'style'], additionalProperties: false } },
     { name: 'remove_text', description: 'Remove a text item by its index from get_timeline.', input_schema: { type: 'object', properties: { text_index: { type: 'integer' } }, required: ['text_index'], additionalProperties: false } },
+    { name: 'replace_text', description: 'Change or remove words that are part of the video picture itself (burned in: a subtitle under a logo, a slide heading), at the playhead. The user drags a box around the words on the preview; the app erases them from the frames where they appear and draws the new text in matching colour and size. Pass text to replace, an empty string to just remove, or omit text to let the user type it. Not for text items added on the text lane (use remove_text / add_text).', input_schema: { type: 'object', properties: { text: { type: 'string' } }, additionalProperties: false } },
     { name: 'edit_clip', description: 'Cut-level edits. split: needs time (timeline seconds). delete: clip_index. trim: clip_index plus in and/or out in SOURCE seconds. move: clip_index and to_index.', input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['split', 'delete', 'trim', 'move'] }, clip_index: { type: 'integer' }, time: { type: 'number' }, in: { type: 'number' }, out: { type: 'number' }, to_index: { type: 'integer' } }, required: ['action'], additionalProperties: false } },
     { name: 'seek', description: 'Move the playhead (timeline seconds).', input_schema: { type: 'object', properties: { time: { type: 'number' } }, required: ['time'], additionalProperties: false } },
     { name: 'undo', description: 'Undo the last edit steps (clip and text edits; not grade changes).', input_schema: { type: 'object', properties: { steps: { type: 'integer' } }, additionalProperties: false } },

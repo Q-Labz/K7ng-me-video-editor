@@ -333,7 +333,27 @@
   /* ---------------- pointer handling ---------------- */
   let drag = null, cursor = null;
   const toDoc = (e) => { const r = view.getBoundingClientRect(); return { x: (e.clientX - r.left - St.ox) / St.zoom, y: (e.clientY - r.top - St.oy) / St.zoom }; };
+  /* touch: one finger uses the tool, two fingers pinch-zoom and pan */
+  const touches = new Map();
+  function pinchState() {
+    const [a, b] = [...touches.values()], r = view.getBoundingClientRect();
+    return { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx: (a.x + b.x) / 2 - r.left, my: (a.y + b.y) / 2 - r.top };
+  }
+  function startPinch() {
+    if (drag && drag.type === 'paint' || drag && drag.type === 'move') { St.fut = []; restoreSnap(St.hist.pop()); } // drop the stroke the first finger began
+    if (drag && drag.type === 'crop') { St.crop = null; showCropBar(false); }
+    const p = pinchState(); drag = { type: 'pinch', d: p.d, mx: p.mx, my: p.my, zoom: St.zoom, ox: St.ox, oy: St.oy }; cursor = null;
+  }
   function onDown(e) {
+    if (root.classList.contains('panel-open')) { $('stPanelToggle').click(); return; } // phones: a tap on the canvas closes the panel sheet
+    if (e.pointerType === 'touch') {
+      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (touches.size === 2) { view.setPointerCapture(e.pointerId); startPinch(); render(); return; }
+      if (touches.size > 2) return;
+    }
+    if (St.pickSource && St.tool === 'clone' && e.button === 0) { // touch has no Alt key: "Set source" then tap
+      const p = toDoc(e); St.cloneSrc = { x: p.x, y: p.y }; St.cloneOff = null; setPickSource(false); note('Clone source set — paint to copy from it'); render(); return;
+    }
     if (e.button === 1 || (e.button === 0 && spaceHeld)) { drag = { type: 'pan', x: e.clientX, y: e.clientY, ox: St.ox, oy: St.oy }; view.setPointerCapture(e.pointerId); return; }
     if (e.button !== 0) return;
     const p = toDoc(e), l = active(); if (!l) return;
@@ -354,7 +374,7 @@
       }
       case 'clone':
         if (e.altKey) { St.cloneSrc = { x: p.x, y: p.y }; St.cloneOff = null; note('Clone source set — paint to copy from it'); render(); return; }
-        if (!St.cloneSrc) return note('Alt-click to set a clone source first');
+        if (!St.cloneSrc) return note('Set a clone source first: Alt-click, or tap Set source');
         if (!St.cloneOff) St.cloneOff = { x: St.cloneSrc.x - p.x, y: St.cloneSrc.y - p.y };
         cloneSource = cloneCanvas(l.canvas);
         // fallthrough to painting
@@ -365,7 +385,13 @@
     }
   }
   function onMove(e) {
-    const p = toDoc(e); cursor = p;
+    if (e.pointerType === 'touch' && touches.has(e.pointerId)) touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (drag && drag.type === 'pinch') {
+      if (touches.size < 2) return;
+      const p = pinchState(), z = clamp(drag.zoom * p.d / drag.d, 0.05, 32);
+      St.ox = p.mx - (drag.mx - drag.ox) * z / drag.zoom; St.oy = p.my - (drag.my - drag.oy) * z / drag.zoom; St.zoom = z; render(); return;
+    }
+    const p = toDoc(e); cursor = e.pointerType === 'touch' && !drag ? null : p;
     if (!drag) { render(); return; }
     const l = active();
     if (drag.type === 'pan') { St.ox = drag.ox + e.clientX - drag.x; St.oy = drag.oy + e.clientY - drag.y; render(); return; }
@@ -382,7 +408,16 @@
       render();
     }
   }
-  function onUp() { if (drag && drag.type === 'paint') renderLayers(); drag = null; }
+  function onUp(e) {
+    if (e && e.pointerType === 'touch') {
+      touches.delete(e.pointerId);
+      if (drag && drag.type === 'pinch') { if (!touches.size) drag = null; return; } // lifting one finger of a pinch doesn't start painting
+    }
+    if (drag && drag.type === 'paint') renderLayers();
+    if (e && e.pointerType === 'touch') cursor = null;
+    drag = null; render();
+  }
+  function setPickSource(on) { St.pickSource = on; const b = $('stPickSrc'); if (b) b.classList.toggle('active', on); if (on) note('Tap the spot to copy from'); }
   let spaceHeld = false;
 
   /* ---------------- operations ---------------- */
@@ -521,6 +556,7 @@
   function syncOptions() {
     const box = $('stOptions'); if (!box) return;
     const l = active(), t = St.tool;
+    $('stPickSrc').hidden = t !== 'clone'; if (t !== 'clone' && St.pickSource) setPickSource(false);
     const showBrush = ['brush', 'eraser', 'clone', 'heal'].includes(t), showTol = ['fill', 'wand'].includes(t), showText = !!(l && l.kind === 'text' && l.text);
     box.querySelector('.o-brush').hidden = !showBrush; box.querySelector('.o-tol').hidden = !showTol; box.querySelector('.o-text').hidden = !showText;
     if (showText) { $('stTextValue').value = l.text.value; $('stTextSize').value = l.text.size; $('stTextFont').value = l.text.font; $('stTextColor').value = l.text.color; }
@@ -536,13 +572,14 @@
           <button class="btn small" id="stUndo" title="Ctrl+Z">Undo</button><button class="btn small" id="stRedo" title="Ctrl+Shift+Z">Redo</button>
           <button class="btn small" id="stPng">PNG</button><button class="btn small" id="stJpg">JPG</button>
           <button class="btn small primary" id="stSend">Add to timeline</button>
+          <button class="btn small st-panel-toggle" id="stPanelToggle" aria-expanded="false">Adjust</button>
           <button class="btn small" id="stClose" title="Esc">Close</button>
           <input type="file" id="stFile" accept="image/*" hidden>
         </div>
       </header>
       <div class="st-options" id="stOptions">
         <label class="o-color"><span>Colour</span><input type="color" id="stColor" value="#E8E4DC"></label>
-        <span class="o-brush"><label><span>Size</span><input type="range" id="stBrush" min="1" max="400" value="40"></label><label><span>Hardness</span><input type="range" id="stHard" min="0" max="1" step="0.01" value="0.6"></label><label><span>Flow</span><input type="range" id="stFlow" min="0.05" max="1" step="0.01" value="1"></label></span>
+        <span class="o-brush"><label><span>Size</span><input type="range" id="stBrush" min="1" max="400" value="40"></label><label><span>Hardness</span><input type="range" id="stHard" min="0" max="1" step="0.01" value="0.6"></label><label><span>Flow</span><input type="range" id="stFlow" min="0.05" max="1" step="0.01" value="1"></label><button class="btn small" id="stPickSrc" title="Then tap the spot to copy from (or Alt-click)">Set source</button></span>
         <span class="o-tol"><label><span>Tolerance</span><input type="range" id="stTol" min="0" max="128" value="32"></label></span>
         <span class="o-text"><label><span>Text</span><input type="text" id="stTextValue"></label><label><span>Size</span><input type="number" id="stTextSize" min="6" max="1000"></label><label><span>Font</span><select id="stTextFont">${FONTS.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select></label><label><span>Colour</span><input type="color" id="stTextColor"></label></span>
         <span class="st-cropbar" id="stCropBar" hidden><button class="btn small primary" id="stCropOk">Apply crop</button><button class="btn small" id="stCropNo">Cancel</button><small>Shift = square</small></span>
@@ -594,6 +631,9 @@
     $('stTextFont').onchange = (e) => textEdit((t) => (t.font = e.target.value));
     $('stTextColor').oninput = (e) => textEdit((t) => (t.color = e.target.value));
     $('stFit').onclick = fit;
+    $('stPickSrc').onclick = () => setPickSource(!St.pickSource);
+    $('stPanelToggle').onclick = () => { const on = root.classList.toggle('panel-open'); $('stPanelToggle').setAttribute('aria-expanded', on); $('stPanelToggle').classList.toggle('active', on); };
+    root.querySelector('.st-panel').addEventListener('click', (e) => { if (e.target.closest('[data-op],[data-filter],[data-tf],#stAdjApply') && root.classList.contains('panel-open') && matchMedia('(max-width: 820px)').matches) $('stPanelToggle').click(); }); // close the sheet to show the result
     $('stCropOk').onclick = applyCrop; $('stCropNo').onclick = () => { St.crop = null; showCropBar(false); render(); };
     $('stUndo').onclick = undo; $('stRedo').onclick = redo;
     $('stClose').onclick = close;
@@ -630,6 +670,7 @@
     $('stDown').onclick = () => { if (St.active <= 0) return; pushHist(); const [l] = St.layers.splice(St.active, 1); St.layers.splice(--St.active, 0, l); renderLayers(); render(); };
     $('stDelLayer').onclick = () => { if (St.layers.length <= 1) return note('Keep at least one layer'); pushHist(); St.layers.splice(St.active, 1); St.active = Math.max(0, St.active - 1); renderLayers(); render(); };
     window.addEventListener('resize', () => St.open && render());
+    new ResizeObserver(() => St.open && fit()).observe(root.querySelector('.st-stage')); // rotation, panel sheet, toolbar wrap
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('keyup', (e) => { if (e.code === 'Space') spaceHeld = false; }, true);
   }

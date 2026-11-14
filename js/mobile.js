@@ -95,6 +95,7 @@
     const close = (fn) => () => { setSheet(null); fn(); };
     create.querySelector('#mCreateGrid').append(
       button('Add Text', 'title · lower third · caption', close(() => K().tools.title())),
+      button('Replace Text', 'swap words in the video', close(() => K().tools.replace())),
       button('Captions', 'import .srt / .vtt', close(() => K().tools.captions())),
       button('Music', 'beat grid · auto duck', close(() => K().tools.music())),
       button('Cut to Beat', 'after adding music', close(() => K().runTool('beatcut'))),

@@ -23,6 +23,9 @@ uniform vec4 u_rect;       // media-uv rect visible on canvas: x, y, w, h
 uniform float u_raw;
 uniform float u_exposure, u_contrast, u_highlights, u_shadows, u_temp, u_tint, u_sat, u_vibrance, u_vignette, u_fade;
 uniform vec2 u_aspect;
+uniform vec4 u_cover[4];   // output-uv boxes whose content is replaced by the surrounding background
+uniform float u_coverN;
+uniform vec2 u_px;         // one output pixel in uv
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 
@@ -30,6 +33,26 @@ vec3 overlay(vec3 c) {
   if (u_ovOn < 0.5) return c;
   vec4 o = texture2D(u_overlay, v_uv);
   return mix(c, o.rgb, o.a);
+}
+
+vec3 srcAt(vec2 o) { return texture2D(u_tex, u_rect.xy + clamp(o, 0.0, 1.0) * u_rect.zw).rgb; }
+vec3 ring(vec2 o, vec2 d) { return (srcAt(o) + srcAt(o + d) + srcAt(o + 2.0 * d)) / 3.0; } // a few pixels outward, averaged
+// Coons patch: rebuild the inside of each box from its four edges, so text burned into the video disappears
+vec3 cover(vec3 c) {
+  for (int i = 0; i < 4; i++) {
+    if (float(i) >= u_coverN) break;
+    vec4 r = u_cover[i];
+    vec2 q = (v_uv - r.xy) / r.zw;
+    if (q.x < 0.0 || q.y < 0.0 || q.x > 1.0 || q.y > 1.0) continue;
+    vec2 m = u_px * 2.0, dx = vec2(u_px.x * 2.0, 0.0), dy = vec2(0.0, u_px.y * 2.0);
+    float x0 = r.x - m.x, x1 = r.x + r.z + m.x, y0 = r.y - m.y, y1 = r.y + r.w + m.y;
+    float X = r.x + q.x * r.z, Y = r.y + q.y * r.w;
+    vec3 T = ring(vec2(X, y0), -dy), B = ring(vec2(X, y1), dy), L = ring(vec2(x0, Y), -dx), R = ring(vec2(x1, Y), dx);
+    vec3 TL = ring(vec2(x0, y0), -dx - dy), TR = ring(vec2(x1, y0), dx - dy), BL = ring(vec2(x0, y1), dy - dx), BR = ring(vec2(x1, y1), dx + dy);
+    return (1.0 - q.y) * T + q.y * B + (1.0 - q.x) * L + q.x * R
+      - ((1.0 - q.x) * (1.0 - q.y) * TL + q.x * (1.0 - q.y) * TR + (1.0 - q.x) * q.y * BL + q.x * q.y * BR);
+  }
+  return c;
 }
 
 vec3 lutLookup(vec3 c) {
@@ -50,6 +73,7 @@ void main() {
   vec2 muv = u_rect.xy + v_uv * u_rect.zw;
   if (muv.x < 0.0 || muv.y < 0.0 || muv.x > 1.0 || muv.y > 1.0) { gl_FragColor = vec4(overlay(vec3(0.0)), 1.0); return; }
   vec3 c = texture2D(u_tex, muv).rgb;
+  if (u_coverN > 0.0) c = clamp(cover(c), 0.0, 1.0);
   if (u_raw > 0.5) { gl_FragColor = vec4(overlay(c), 1.0); return; }
 
   // exposure (in stops, applied in approx-linear space)
@@ -114,6 +138,7 @@ void main() {
       this.lutTex = this._texture();
       this.ovTex = this._texture();
       this.ovOn = false;
+      this.covers = [];
       gl.uniform1i(this.u.u_tex, 0);
       gl.uniform1i(this.u.u_lut, 1);
       gl.uniform1i(this.u.u_overlay, 2);
@@ -180,6 +205,9 @@ void main() {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv);
     }
 
+    /** Boxes ({x, y, w, h} in 0..1 of the output) to fill from their surroundings, before grading. Up to 4. */
+    setCovers(list) { this.covers = (list || []).slice(0, 4); }
+
     /** Upload a frame from a video / image / canvas element. Returns true on success. */
     upload(el) {
       const gl = this.gl;
@@ -224,6 +252,12 @@ void main() {
       gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.ovTex);
       gl.uniform1f(u.u_ovOn, this.ovOn ? 1 : 0);
       gl.uniform4f(u.u_rect, cx - w / 2, cy - h / 2, w, h);
+      this.lastRect = [cx - w / 2, cy - h / 2, w, h];
+      const cov = new Float32Array(16);
+      this.covers.forEach((b, i) => cov.set([b.x, b.y, b.w, b.h], i * 4));
+      gl.uniform4fv(u['u_cover[0]'], cov);
+      gl.uniform1f(u.u_coverN, this.covers.length);
+      gl.uniform2f(u.u_px, 1 / cw, 1 / ch);
       gl.uniform1f(u.u_raw, raw ? 1 : 0);
       gl.uniform1f(u.u_lutSize, this.lutSize);
       gl.uniform1f(u.u_lutAmt, this.lutSize > 2 ? params.lutAmt : 0);

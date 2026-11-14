@@ -10,6 +10,9 @@ On phones and small tablets the editor switches to a mobile layout automatically
 - **Make a Reel:** one tap takes raw footage to a finished vertical short. It reframes to 9:16 so the subject stays in frame, cuts silence and dead frames, trims to 15 / 30 / 60 / 90 s using the strongest moments, and levels the audio (optionally with voice enhance). Every step is undoable. Also available on desktop under **Edit → Make a Reel…**.
 - **Safe-zone guides:** the **Guides** button cycles through TikTok, Reels and Shorts overlays. They show where each app's buttons and captions cover the frame, and are never exported.
 - **Touch timeline:** tap a clip to select it, then drag it to move or drag its handles to trim. One finger pans, two fingers pinch to zoom, and a tap on empty track moves the playhead.
+- **Landscape:** turn the phone on its side and the preview moves to the left, with the timeline and tabs on the right, so the picture stays usable.
+- **Replace text on phones:** **Create → Replace Text**, then drag a box around the words with your finger.
+- **Image Studio on phones:** **Create → Image Studio**. Tools sit in a strip under the canvas, and **Adjust** opens AI enhance, adjustments, filters, transform and layers in a sheet (tap the canvas to close it). One finger uses the tool; two fingers pinch to zoom and pan. For Clone, tap **Set source**, then tap the spot to copy from.
 - **Export to apps:** export prefers MP4 (H.264/AAC) wherever the browser can record it, which is what Instagram, TikTok and YouTube want. On phones, **Share…** opens the system share sheet so the video goes straight to an app or to Photos.
 - **Install:** "Add to Home Screen" (iOS Safari) or "Install app" (Android Chrome) runs KutLabz full-screen like a native app, and the app shell works offline. On Android, the installed app also appears in the share sheet, so you can share videos from your gallery straight into the editor.
 
@@ -66,6 +69,7 @@ Nothing is uploaded: every tool analyses downscaled frames or decoded PCM in the
 
 **Content**
 - **Add Text** – title, lower third or caption at the playhead, drawn in the brand fonts and burned into exports. Edit or retime it by double-clicking it on the text lane; **Del** removes it.
+- **Replace Text in Video** – change words that are part of the video itself, such as the subtitle under a logo on a title card. Drag a box around the text on the preview. The box tightens to the text and picks up its colour and letter size, and the app finds when the text is on screen. Type the new wording, or leave it empty to remove the text. Each frame, the box is rebuilt from the background around its edges (a Coons-patch fill in the shader, before grading), so it follows moving gradients and light. The new text is drawn on top and burned into the export. It shows on the text lane as **⇄**: double-click it to change the wording, font, weight, colour or timing. Best on plain, smooth or gently moving backgrounds, like title cards, lower thirds and slides. Text over detailed footage or moving people can leave a soft patch. Up to four boxes can be on screen at once.
 - **Import Captions** – `.srt` or `.vtt` cues become captions on the text lane.
 - **Best Thumbnail** – scores frames across the edit for sharpness (Laplacian variance), exposure, contrast and colourfulness, avoids cuts and dead frames, and saves the winner as a graded PNG.
 - **Chapters** – YouTube chapter list from scene cuts, clip boundaries and titles (first at 0:00, at least 10 s apart), ready to copy into a description.
@@ -91,7 +95,7 @@ Nothing is uploaded: every tool analyses downscaled frames or decoded PCM in the
 
 ### Assistant
 
-- **Local (default, offline):** understands requests like “cut the silences and level the audio”, “make a 30 second highlight reel”, “vertical for TikTok”, “warmer and a bit brighter”, “use the teal look”, “add title "Launch Day"”, “stabilize”, “auto zoom”, “undo”. Each action is listed as it runs.
+- **Local (default, offline):** understands requests like “cut the silences and level the audio”, “make a 30 second highlight reel”, “vertical for TikTok”, “warmer and a bit brighter”, “use the teal look”, “add title "Launch Day"”, “replace the subtitle with Quarterly Bonus”, “remove the text under the logo”, “stabilize”, “auto zoom”, “undo”. Each action is listed as it runs.
 - **Claude (opt-in):** **Connect Claude** and paste an Anthropic API key. The assistant uses Claude Opus 5.5 (`claude-opus-5-5`) through the official `@anthropic-ai/sdk`, loaded from jsDelivr. Claude gets tools for reading the timeline, running every AI tool, grading, looks, aspect, text and cut-level edits, and plans multi-step edits itself. Server-side refusal fallbacks are on. **What is sent:** your messages and a text summary of the timeline (clip names, times, settings), straight from your browser to `api.anthropic.com`. Media never leaves the machine. The key is kept for the session only, or in this browser's storage if you tick *Remember*; usage is billed to your key.
 
 AI tools act on the selected clip, or on every clip when none is selected.

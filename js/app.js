@@ -317,7 +317,9 @@
   /* ---------------- text overlay (titles, lower thirds, captions) ---------------- */
   const ovCanvas = document.createElement('canvas');
   let ovKey = '';
-  const TEXT_STYLES = { title: 'Title', lower: 'Lower third', caption: 'Caption' };
+  const TEXT_STYLES = { title: 'Title', lower: 'Lower third', caption: 'Caption', replace: 'Replaced text' };
+  const STYLE_OPTS = Object.entries(TEXT_STYLES).filter(([k]) => k !== 'replace'); // replace items need a box; they have their own editor
+  const BOX_FONTS = [['Arial, Helvetica, sans-serif', 'Sans'], ['Syne, sans-serif', 'Syne'], ['"Arial Narrow", "Roboto Condensed", "Helvetica Neue", sans-serif', 'Condensed'], ['Impact, "Arial Black", sans-serif', 'Heavy'], ['Georgia, "Times New Roman", serif', 'Serif'], ['"Courier New", monospace', 'Mono']];
   function wrapLines(g, text, maxW) {
     const out = [];
     for (const para of String(text).split('\n')) {
@@ -335,6 +337,7 @@
     g.save(); // items of the same style that overlap in time stack instead of drawing over each other
     if (slot) g.translate(0, (t.style === 'title' ? 1 : -1) * slot * Math.round(130 * u));
     g.textBaseline = 'alphabetic';
+    if (t.style === 'replace') { drawBoxText(g, t, W, H); g.restore(); return; }
     if (t.style === 'title') {
       const fs = Math.round(96 * u * (W >= H ? 1 : 0.8));
       g.font = `700 ${fs}px Syne, sans-serif`; g.textAlign = 'center';
@@ -367,18 +370,33 @@
     }
     g.restore();
   }
+  /* replacement text, fitted inside the box it replaces */
+  function drawBoxText(g, t, W, H) {
+    const b = t.box, text = String(t.text || '').trim(); if (!b || !text) return;
+    const bw = b.w * W, bh = b.h * H, lines = text.split('\n');
+    const font = (fs) => `${t.weight || 700} ${fs}px ${t.font || BOX_FONTS[0][0]}`;
+    let fs = Math.min((bh / lines.length) * 0.74 / 1.1, t.size ? t.size * H : Infinity);
+    g.font = font(fs);
+    const widest = Math.max(...lines.map((l) => g.measureText(l).width));
+    if (widest > bw * 0.98) fs *= (bw * 0.98) / widest;
+    fs = Math.max(4, fs); g.font = font(fs);
+    g.fillStyle = t.color || '#111111'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    const lh = fs * 1.1, cy = b.y * H + bh / 2;
+    lines.forEach((l, i) => g.fillText(l, b.x * W + bw / 2, cy + (i - (lines.length - 1) / 2) * lh + fs * 0.04));
+  }
   function updateOverlay(force) {
     if (!R) return;
     const vis = S.texts.filter((t) => S.time >= t.start && S.time < t.end);
-    const key = vis.map((t) => t.id + t.style + t.text).join('|') + '@' + canvas.width + 'x' + canvas.height;
+    const key = vis.map((t) => t.id + t.style + t.text + (t.box ? JSON.stringify([t.box, t.color, t.font, t.weight]) : '')).join('|') + '@' + canvas.width + 'x' + canvas.height;
     if (key === ovKey && !force) return;
     ovKey = key; S.dirty = true;
-    if (!vis.length) { R.setOverlay(null); return; }
+    R.setCovers(vis.filter((t) => t.style === 'replace' && t.box).map((t) => t.box));
+    if (!vis.some((t) => t.style !== 'replace' || String(t.text || '').trim())) { R.setOverlay(null); return; }
     ovCanvas.width = canvas.width; ovCanvas.height = canvas.height;
     const g = ovCanvas.getContext('2d');
     g.clearRect(0, 0, ovCanvas.width, ovCanvas.height);
     const slots = {};
-    for (const t of vis) { const k = slots[t.style] = (slots[t.style] ?? -1) + 1; drawText(g, t, ovCanvas.width, ovCanvas.height, k); }
+    for (const t of vis) { const k = t.style === 'replace' ? 0 : (slots[t.style] = (slots[t.style] ?? -1) + 1); drawText(g, t, ovCanvas.width, ovCanvas.height, k); }
     R.setOverlay(ovCanvas);
   }
   if (document.fonts && document.fonts.load) {
@@ -639,7 +657,7 @@
       rowEnd[row] = Math.max(rowEnd[row], t.end);
       b.className = 'tblock ' + t.style + (row ? ' row2' : '') + (t.id === S.selText ? ' sel' : '');
       b.style.left = PAD + t.start * S.pps + 'px'; b.style.width = Math.max(4, (t.end - t.start) * S.pps) + 'px';
-      b.textContent = t.text.replace(/\n/g, ' '); b.title = `${TEXT_STYLES[t.style]} · ${fmt(t.start)}–${fmt(t.end)} · double-click to edit, Del to remove`;
+      b.textContent = t.style === 'replace' ? '⇄ ' + (t.text.trim() ? t.text.replace(/\n/g, ' ') : 'removed text') : t.text.replace(/\n/g, ' '); b.title = `${TEXT_STYLES[t.style]} · ${fmt(t.start)}–${fmt(t.end)} · double-click to edit, Del to remove`;
       b.dataset.id = t.id;
       textLane.appendChild(b);
     }
@@ -1131,11 +1149,12 @@
   /* ---------------- text items ---------------- */
   async function editText(id) {
     const t = S.texts.find((x) => x.id === id); if (!t) return;
+    if (t.style === 'replace') return editReplace(t);
     const v = await dialog({
       title: 'Edit text', ok: 'Save',
       fields: [
         { k: 'text', label: 'Text', type: 'textarea', value: t.text },
-        { k: 'style', label: 'Style', type: 'select', options: Object.entries(TEXT_STYLES), value: t.style },
+        { k: 'style', label: 'Style', type: 'select', options: STYLE_OPTS, value: t.style },
         { k: 'start', label: 'Start (s)', type: 'number', step: 0.01, min: 0, value: t.start },
         { k: 'end', label: 'End (s)', type: 'number', step: 0.01, min: 0, value: t.end },
       ],
@@ -1146,6 +1165,150 @@
     S.texts.sort((a, b) => a.start - b.start);
     ovKey = ''; renderTimeline(); setStatus('Text updated');
   }
+  /* ---------------- replace text burned into the video ---------------- */
+  // Drag a box on the preview. Returns {x, y, w, h} in 0..1 of the output frame, or null.
+  function pickRegion(hint) {
+    return new Promise((resolve) => {
+      const view = canvas, stage = $('stage');
+      const ov = document.createElement('div'); ov.className = 'pick';
+      ov.innerHTML = '<div class="pick-bar"><span></span><button class="btn small">Cancel</button></div><div class="pick-box" hidden></div>';
+      ov.querySelector('span').textContent = hint;
+      const place = () => { const r = view.getBoundingClientRect(), s = stage.getBoundingClientRect(); Object.assign(ov.style, { left: r.left - s.left + 'px', top: r.top - s.top + 'px', width: r.width + 'px', height: r.height + 'px' }); };
+      place(); stage.appendChild(ov);
+      const boxEl = ov.querySelector('.pick-box');
+      let a = null, cur = null;
+      const pt = (e) => { const r = ov.getBoundingClientRect(); return { x: clamp((e.clientX - r.left) / r.width, 0, 1), y: clamp((e.clientY - r.top) / r.height, 0, 1) }; };
+      const rect = () => ({ x: Math.min(a.x, cur.x), y: Math.min(a.y, cur.y), w: Math.abs(cur.x - a.x), h: Math.abs(cur.y - a.y) });
+      const done = (v) => { ov.remove(); window.removeEventListener('keydown', onKey, true); window.removeEventListener('resize', place); resolve(v); };
+      const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); done(null); } };
+      window.addEventListener('keydown', onKey, true); window.addEventListener('resize', place);
+      ov.querySelector('button').onclick = (e) => { e.stopPropagation(); done(null); };
+      ov.addEventListener('pointerdown', (e) => { if (e.target.closest('.pick-bar button')) return; ov.setPointerCapture(e.pointerId); a = cur = pt(e); boxEl.hidden = false; ov.classList.add('dragging'); });
+      ov.addEventListener('pointermove', (e) => { if (!a) return; cur = pt(e); const r = rect(); Object.assign(boxEl.style, { left: r.x * 100 + '%', top: r.y * 100 + '%', width: r.w * 100 + '%', height: r.h * 100 + '%' }); });
+      ov.addEventListener('pointerup', () => {
+        if (!a) return; const r = rect(), br = ov.getBoundingClientRect(); a = null; ov.classList.remove('dragging');
+        if (r.w * br.width < 8 || r.h * br.height < 6) { boxEl.hidden = true; return toast('Drag a box around the text'); }
+        done(r);
+      });
+    });
+  }
+  // Read the rendered frame inside a box: tighten it to the text it contains and pick up the text colour.
+  function inspectRegion(box) {
+    const W = canvas.width, H = canvas.height, pad = 4;
+    const x0 = clamp(Math.floor(box.x * W) - pad, 0, W - 1), y0 = clamp(Math.floor(box.y * H) - pad, 0, H - 1);
+    const x1 = clamp(Math.ceil((box.x + box.w) * W) + pad, x0 + 1, W), y1 = clamp(Math.ceil((box.y + box.h) * H) + pad, y0 + 1, H);
+    const w = x1 - x0, h = y1 - y0;
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    try { g.drawImage(canvas, x0, y0, w, h, 0, 0, w, h); } catch (e) { return { box, color: '#111111' }; }
+    const d = g.getImageData(0, 0, w, h).data;
+    const med = (arr) => { arr.sort((p, q) => p - q); return arr[arr.length >> 1]; };
+    // expected background at each pixel: the same edge interpolation (Coons patch) the renderer uses to erase
+    const px = (x, y, k) => d[(y * w + x) * 4 + k];
+    const edge = (x0, y0, x1, y1, k) => (px(x0, y0, k) + px(x1, y1, k)) / 2;
+    const bgAt = (x, y, k) => {
+      const u = w > 1 ? x / (w - 1) : 0, v = h > 1 ? y / (h - 1) : 0;
+      const T = edge(x, 0, x, 1, k), B = edge(x, h - 1, x, h - 2, k), L = edge(0, y, 1, y, k), Rr = edge(w - 1, y, w - 2, y, k);
+      const TL = px(0, 0, k), TR = px(w - 1, 0, k), BL = px(0, h - 1, k), BR = px(w - 1, h - 1, k);
+      return (1 - v) * T + v * B + (1 - u) * L + u * Rr - ((1 - u) * (1 - v) * TL + u * (1 - v) * TR + (1 - u) * v * BL + u * v * BR);
+    };
+    let minX = w, minY = h, maxX = -1, maxY = -1; const ink = [];
+    for (let y = 2; y < h - 2; y++) for (let x = 2; x < w - 2; x++) {
+      const i = (y * w + x) * 4, dist = Math.abs(d[i] - bgAt(x, y, 0)) + Math.abs(d[i + 1] - bgAt(x, y, 1)) + Math.abs(d[i + 2] - bgAt(x, y, 2));
+      if (dist < 60) continue;
+      ink.push([dist, d[i], d[i + 1], d[i + 2]]);
+      if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y;
+    }
+    if (ink.length < 12) return { box, color: '#111111', found: false };
+    ink.sort((p, q) => q[0] - p[0]);
+    const core = ink.slice(0, Math.max(6, ink.length >> 2)); // the most distinct pixels are the text's fill, not its antialiased edge
+    const color = '#' + [1, 2, 3].map((k) => Math.round(med(core.map((p) => p[k]))).toString(16).padStart(2, '0')).join('');
+    const th = maxY - minY + 1, m = Math.max(3, Math.round(th * 0.22)); // margin for glow, shadow and antialiasing
+    const size = (th / 0.72) / H; // font size that gives the original's letter height (capitals ≈ 0.72 em)
+    const bx0 = clamp(x0 + minX - m, 0, W), by0 = clamp(y0 + minY - m, 0, H), bx1 = clamp(x0 + maxX + 1 + m, 0, W), by1 = clamp(y0 + maxY + 1 + m, 0, H);
+    return { box: { x: bx0 / W, y: by0 / H, w: (bx1 - bx0) / W, h: (by1 - by0) / H }, color, size, found: true };
+  }
+  // How long the original text stays on screen: compare the box against the frame under the playhead.
+  async function textSpan(box, signal) {
+    const loc = locate(S.time); if (!loc) return null;
+    const i = S.clips.indexOf(loc.clip), c = loc.clip, a = loc.asset, clipStart = S.starts[i], full = { start: clipStart, end: clipStart + clipDur(c) };
+    if (a.kind !== 'video' || !R.lastRect) return full;
+    const [rx, ry, rw, rh] = R.lastRect;
+    const mb = { x: rx + box.x * rw, y: ry + box.y * rh, w: box.w * rw, h: box.h * rh };
+    const sw = clamp(Math.round(24 / Math.max(mb.h, 0.005)), 320, 960), sh = Math.max(2, Math.round(sw * a.height / a.width));
+    const px = { x: clamp(Math.floor(mb.x * sw), 0, sw - 2), y: clamp(Math.floor(mb.y * sh), 0, sh - 2) };
+    px.w = clamp(Math.ceil(mb.w * sw), 2, sw - px.x); px.h = clamp(Math.ceil(mb.h * sh), 2, sh - px.y);
+    const dur = clipDur(c), step = Math.max(0.2, dur / 240), times = [];
+    for (let t = c.in; t < c.out; t += step) times.push(t);
+    let refIdx = 0; times.forEach((t, k) => { if (Math.abs(t - loc.src) < Math.abs(times[refIdx] - loc.src)) refIdx = k; });
+    const lumas = [];
+    await Analysis.sampleFrames(a.url, times, (img) => {
+      const out = new Float32Array(px.w * px.h);
+      for (let y = 0; y < px.h; y++) for (let x = 0; x < px.w; x++) { const j = ((px.y + y) * sw + px.x + x) * 4; out[y * px.w + x] = img.data[j] * 0.2126 + img.data[j + 1] * 0.7152 + img.data[j + 2] * 0.0722; }
+      lumas.push(out);
+    }, { w: sw, h: sh, signal });
+    const stats = (v) => { let m = 0; for (const x of v) m += x; m /= v.length; let s2 = 0; for (const x of v) s2 += (x - m) ** 2; return { m, s: Math.sqrt(s2 / v.length) }; };
+    const ref = lumas[refIdx], rs = stats(ref);
+    if (rs.s < 4) return full; // nothing distinct under the box at the playhead
+    const present = lumas.map((v) => { const vs = stats(v); if (vs.s < rs.s * 0.25) return false; let cov = 0; for (let k = 0; k < v.length; k++) cov += (v[k] - vs.m) * (ref[k] - rs.m); return cov / v.length / (vs.s * rs.s) > 0.5; });
+    let lo = refIdx, hi = refIdx;
+    while (lo > 0 && present[lo - 1]) lo--;
+    while (hi < times.length - 1 && present[hi + 1]) hi++;
+    const start = lo === 0 ? full.start : clipStart + times[lo] - c.in - step / 2;
+    const end = hi === times.length - 1 ? full.end : clipStart + times[hi] - c.in + step / 2;
+    return { start: +Math.max(full.start, start).toFixed(3), end: +Math.min(full.end, end).toFixed(3) };
+  }
+  function replaceFields(t) {
+    return [
+      { k: 'text', label: 'New text (leave empty to just remove the original)', type: 'textarea', rows: 2, value: t.text || '' },
+      { k: 'font', label: 'Font', type: 'select', options: BOX_FONTS, value: t.font || BOX_FONTS[0][0] },
+      { k: 'weight', label: 'Weight', type: 'select', options: [['400', 'Regular'], ['600', 'Semibold'], ['700', 'Bold'], ['900', 'Black']], value: String(t.weight || 700) },
+      { k: 'color', label: 'Colour (picked from the original)', type: 'color', value: t.color || '#111111' },
+      { k: 'start', label: 'From (s)', type: 'number', step: 0.01, min: 0, value: t.start },
+      { k: 'end', label: 'To (s)', type: 'number', step: 0.01, min: 0, value: t.end },
+    ];
+  }
+  function applyReplaceValues(t, v) {
+    Object.assign(t, { text: v.text.trim(), font: v.font, weight: +v.weight || 700, color: v.color, start: Math.max(0, v.start), end: Math.max(Math.max(0, v.start) + 0.1, v.end) });
+  }
+  async function editReplace(t) {
+    const v = await dialog({ title: 'Replace text', ok: 'Save', fields: replaceFields(t), note: 'To move the box, delete this item and use Replace Text again.' });
+    if (!v) return;
+    pushHistory(); applyReplaceValues(t, v); S.texts.sort((a, b) => a.start - b.start);
+    ovKey = ''; renderTimeline(); setStatus(t.text ? `Text replaced with "${t.text}"` : 'Text removed');
+  }
+  async function replaceText(opts = {}) {
+    if (!S.clips.length) return toast('Import a video first');
+    if (S.busy || S.exporting) return toast('Wait for the current task to finish');
+    pause();
+    let box = opts.box;
+    if (!box) {
+      box = await pickRegion('Drag a box around the text you want to replace');
+      if (!box) return;
+    }
+    await frameReady();
+    const res = inspectRegion(box);
+    let span = null;
+    await runTask('Finding when that text is on screen…', async (signal, progress) => {
+      progress(0.1);
+      try { span = await textSpan(res.box, signal); } catch (e) { if (e.name === 'AbortError') throw e; span = null; }
+    });
+    const loc = locate(S.time), idx = loc ? S.clips.indexOf(loc.clip) : 0;
+    span = span || { start: S.starts[idx] || 0, end: (S.starts[idx] || 0) + (loc ? clipDur(loc.clip) : 3) };
+    const draft = { id: uid(), style: 'replace', text: opts.text ?? '', box: res.box, color: opts.color || res.color, font: opts.font || BOX_FONTS[0][0], weight: opts.weight || 700, size: res.size || null, start: span.start, end: span.end };
+    // preview the clean-up while the dialog is open
+    S.texts.push(draft); ovKey = ''; S.dirty = true;
+    let v = opts.text != null ? { text: opts.text, font: draft.font, weight: draft.weight, color: draft.color, start: draft.start, end: draft.end } : null;
+    if (!v) v = await dialog({ title: 'Replace text', ok: 'Replace', fields: replaceFields(draft), note: `${res.found ? 'Box fitted to the text' : 'No clear text found in the box — it will be covered as drawn'} · on screen ${fmt(span.start)}–${fmt(span.end)}.` });
+    S.texts = S.texts.filter((t) => t !== draft);
+    if (!v) { ovKey = ''; S.dirty = true; return; }
+    pushHistory(); applyReplaceValues(draft, v);
+    S.texts.push(draft); S.texts.sort((a, b) => a.start - b.start); S.selText = draft.id;
+    ovKey = ''; renderTimeline();
+    setStatus(draft.text ? `Replaced text with "${draft.text}" (${fmt(draft.start)}–${fmt(draft.end)}) — double-click ⇄ on the text lane to edit` : `Removed text (${fmt(draft.start)}–${fmt(draft.end)})`);
+    return draft;
+  }
+
   function parseSubs(raw) {
     const txt = raw.replace(/\r/g, '').replace(/^﻿/, '');
     const re = /(?:(\d{1,2}):)?(\d{1,2}):(\d{2})[,.](\d{1,3})\s*-->\s*(?:(\d{1,2}):)?(\d{1,2}):(\d{2})[,.](\d{1,3})[^\n]*\n([\s\S]*?)(?=\n[ \t]*\n|$)/g;
@@ -1372,12 +1535,12 @@
         title: 'Add text', ok: 'Add at playhead',
         fields: [
           { k: 'text', label: 'Text', type: 'textarea', value: '' },
-          { k: 'style', label: 'Style', type: 'select', options: Object.entries(TEXT_STYLES), value: 'title' },
+          { k: 'style', label: 'Style', type: 'select', options: STYLE_OPTS, value: 'title' },
           { k: 'dur', label: 'Duration (s)', type: 'number', step: 0.1, min: 0.5, value: 3 },
         ],
       })).then((v) => {
         if (!v || !v.text.trim()) return;
-        if (!TEXT_STYLES[v.style]) v.style = 'title';
+        if (!TEXT_STYLES[v.style] || v.style === 'replace') v.style = 'title';
         pushHistory();
         const start = +(v.start != null ? clamp(+v.start, 0, Math.max(0, S.total)) : S.time).toFixed(3);
         const t = { id: uid(), text: v.text.trim(), style: v.style, start, end: +(start + Math.max(0.5, v.dur || 3)).toFixed(3) };
@@ -1388,6 +1551,8 @@
     },
 
     captions() { $('srtInput').value = ''; $('srtInput').click(); },
+
+    replace(opts) { return replaceText(opts); },
 
     screen() { return openScreen(); },
 
