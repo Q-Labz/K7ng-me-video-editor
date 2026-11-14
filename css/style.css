@@ -464,3 +464,11 @@ body.mobile .st-eye { width: 40px; padding: 6px 0; }
   body.mobile .st-stage { grid-column: 2; }
   body.mobile .st-panel { left: auto; top: 0; width: min(360px, 60vw); max-height: none; border-radius: 0; border-top: 0; border-left: 1px solid var(--line-2); transform: translateX(110%); padding-top: max(16px, env(safe-area-inset-top)); }
 }
+
+/* ================= Replace text: box picker ================= */
+.pick { position: absolute; z-index: 5; cursor: crosshair; touch-action: none; background: rgba(10,10,10,.18); }
+.pick-bar { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; max-width: calc(100% - 16px); padding: 6px 6px 6px 12px; background: rgba(10,10,10,.88); border: 1px solid var(--line-2); border-radius: var(--radius); font-family: var(--mono); font-size: 11px; color: var(--bone); pointer-events: none; transition: opacity .2s var(--ease); }
+.pick-bar button { pointer-events: auto; }
+.pick.dragging .pick-bar { opacity: 0; }
+.pick-box { position: absolute; outline: 2px dashed var(--bone); background: rgba(232,228,220,.08); box-shadow: 0 0 0 9999px rgba(10,10,10,.35); pointer-events: none; }
+.tblock.replace { background: #1c1c1a; border-style: dashed; }
